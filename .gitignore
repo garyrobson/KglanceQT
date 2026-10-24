@@ -1,18 +1,11 @@
-target
-source.txt
-.worktrees
-
-## Documents
-docs/*
-!docs/user-guide/
-
-roadmap.md
-.envrc
-.idea/
-*.zst
-*.local*
-
-# Repomix local AI context
-repomix.config.json
-repomix-output.*
-assets_test/*
+/build/
+/pkg/
+/src-cache/
+/packaging/arch/src/
+/packaging/arch/pkg/
+*.pkg.tar.*
+*.src.tar.*
+*.tar.gz
+*.log
+__pycache__/
+AGENTS.local.md

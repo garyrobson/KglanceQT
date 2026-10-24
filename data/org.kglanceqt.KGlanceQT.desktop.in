@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=KGlanceQT
+GenericName=File Preview
+Comment=Preview files with Qt 6 and KDE components
+Icon=preview
+Exec="@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/kglanceqt" -- %U
+Terminal=false
+Categories=Qt;KDE;Graphics;Viewer;
+StartupNotify=true
+NoDisplay=true

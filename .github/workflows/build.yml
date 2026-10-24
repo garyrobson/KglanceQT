@@ -1,0 +1,20 @@
+name: Native build and tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install distribution dependencies
+        run: >-
+          pacman -Syu --noconfirm --needed git cmake ninja qt6-base qt6-multimedia
+          qt6-tools kparts ktexteditor kio karchive kwindowsystem okular python dbus
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+      - name: Build
+        run: cmake --build build -j 2
+      - name: Test
+        run: dbus-run-session -- ctest --test-dir build --output-on-failure

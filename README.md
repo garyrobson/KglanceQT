@@ -1,349 +1,110 @@
-# Kglance (Oxiview)
+# KGlanceQT
 
-<p align="center">
-  <img src="data/images/Screenshot_20260920_141409.png" width="49%" />
-  <img src="data/images/Screenshot_20260920_141428.png" width="49%" />
-</p>
+A Qt 6 and KDE Frameworks 6 file preview application for Plasma and Dolphin.
+Select files in Dolphin and press **Space** to preview them. The application keeps
+a resident process and reuses its preview window; Space or Esc hides it.
 
-A high-performance file preview application for **KDE Plasma 6** built in Rust and Iced. Inspired by macOS QuickLook, Kglance provides near-instantaneous file previews via a single keypress.
+KGlanceQT is an independently maintained successor to Mintori09's
+[Kglance (Oxiview)](https://github.com/Mintori09/kglance). The original history,
+attribution, and AGPL-3.0-only license are preserved. See [ATTRIBUTION.md](ATTRIBUTION.md).
+The active tree contains only the native Qt/KDE implementation and its build,
+packaging, documentation, and tests. No Rust/Iced runtime or Cargo dependencies
+are required.
 
-It operates in two modes:
+## Install on Arch Linux / CachyOS
 
-- **Daemon Mode**: Long-running background service listening on DBus for instant window toggle (<10ms UI latency).
-- **Standalone Mode**: Opens directly for previewing a file without requiring the daemon process, automatically exiting upon close.
+The repository's `packaging/arch/PKGBUILD` builds a normal pacman package, declaring runtime,
+build, and optional dependencies. From the repository root:
 
----
-
-## Key Features
-
-- **Source Code & Text**: Syntax highlighting via `syntect` with line numbers, text search (`Ctrl+F`), word wrap toggle, and multiline text selection.
-- **Floating Selection Context Menu**: Interactive floating toolbar appearing upon text selection with instant plain/HTML copying and configurable custom shell actions (translation, dictionary, AI streaming).
-- **Smooth & Kinetic Inertia Scrolling**: Browser-grade physics-based smooth scrolling, touchpad kinetic fling (least-squares velocity estimation), and full Vim/Page navigation across Markdown, EPUB, PDF, and Source Code/Text.
-- **Images & Creative**: Fast rendering of PNG, JPEG, WebP, GIF (animated GIF playback engine), BMP, SVG (`resvg`), Photoshop (`.psd`), Krita (`.kra`), and OpenRaster (`.ora`). Full support for zoom, pan, lossless rotation (`r`/`R`), flipping (`h`/`v`), direct bitmap pixel copying (`Ctrl+C`), and detailed EXIF metadata sidebar.
-- **Documents & Readers**: PDF continuous scrolling, page navigation, text selection with bounding box detection, and rich HTML/plain text copying; EPUB chapter navigation, reading position preservation, and Furigana/Ruby text rendering; DOCX & XLSX text extraction with LibreOffice fallback; `.typ` document rendering via `typst` CLI.
-- **Databases & Spreadsheets**: SQLite databases (`.db`, `.sqlite`, `.sqlite3`) inspected via `rusqlite` into interactive multi-tab tables; spreadsheet viewer (`.csv`, `.tsv`, `.xlsx`, `.ods`) with column resizing, search, and dynamic font scaling (`Ctrl+=`/`Ctrl+-`/`Ctrl+Wheel`).
-- **File Navigation**: File Tree sidebar (`ge`) for browsing directory trees without leaving the preview window, alongside Table of Contents (`gt`).
-- **Archives**: Interactive folder tree view for ZIP, Tar, GZ, and 7z archives with metadata inspection.
-- **Audio & Video**: Metadata extraction, waveform visualization, and inline media playback using GStreamer pipelines.
-- **Fonts**: Font sample rendering (TTF, OTF, WOFF) and metadata display (`fontdue`).
-- **File Triage & Trash**: Direct file trashing (`Delete`) via FreeDesktop Trash with instant undo toast (`Ctrl+Z`), configurable confirmation modal, and keybindings in settings.
-- **KDE Plasma 6 Integration**: Automatic Dark/Light mode theme sync, Dolphin file manager integration (Space key preview via KIO Service Menu), and autostart daemon.
-
----
-
-## Supported File Formats
-
-| Category         | Formats                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Code**         | `.rs`, `.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.html`, `.css`, `.scss`, `.json`, `.toml`, `.yml/.yaml`, `.xml`, `.sh`, `.bash`, `.zsh`, `.fish`, `.c`, `.h`, `.cpp`, `.hpp`, `.java`, `.kt`, `.swift`, `.go`, `.rb`, `.php`, `.pl`, `.pm`, `.lua`, `.r`, `.sql`, `.graphql`, `.proto`, `.tex`, `.bib`, `.dockerfile`, `.makefile`, `.cmake`, `.gradle`, `.cfg`, `.ini`, `.conf`, `.txt`, `.log`, `.diff`, `.patch`, `.vim`, `.ps1`, `.bat` |
-| **Markdown**     | `.md`, `.markdown`, `.mdown`, `.mdwn`, `.mkd`, `.mkdn` (GFM tables, task lists, HTML `<img>`, Furigana `<ruby>`, animated GIFs, LaTeX math)                                                                                                                                                                                                                                                                                             |
-| **Images**       | `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.bmp`, `.ico`                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Vector**       | `.svg`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **Photoshop**    | `.psd`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **Krita**        | `.kra`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **OpenRaster**   | `.ora`                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| **Documents**    | `.pdf` (text selection & rich copy), `.epub` (Ruby text & chapter reader), `.typ` (requires `typst`)                                                                                                                                                                                                                                                                                                                                   |
-| **Databases**    | `.sqlite`, `.sqlite3`, `.db`, `.db3`, `.s3db`, `.sl3`                                                                                                                                                                                                                                                                                                                                                                                    |
-| **Office**       | `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Spreadsheets** | `.csv`, `.tsv`, `.xlsx`, `.ods` (with dynamic font zoom)                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Archives**     | `.zip`, `.tar`, `.gz`, `.tgz`, `.xz`, `.txz`, `.7z`                                                                                                                                                                                                                                                                                                                                                                                      |
-| **Fonts**        | `.ttf`, `.otf`, `.woff`, `.woff2`                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **3D Models**    | `.stl` (binary & ASCII), `.obj` (interactive GPU orbit camera, zoom, auto-rotation, flat/smooth/wireframe shading)                                                                                                                                                                                                                                                                                        |
-| **Audio**        | `.mp3`, `.wav`, `.flac`, `.ogg`, `.aac`, `.m4a`, `.opus`                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Video**        | `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.webm`, `.flv`, `.m4v`                                                                                                                                                                                                                                                                                                                                                                          |
-| **Folders**      | Any directory — browse and navigate its contents                                                                                                                                                                                                                                                                                                                                                                                         |
-
-Files without a matching extension fall back to plain text rendering.
-
----
-
-## Dependencies
-
-### System Build Dependencies
-
-To build Kglance from source on Linux (Debian/Ubuntu/Arch/Fedora), the following system development libraries are required:
-
-| Component          | Library Dependency                                        | Description / Usage                                                             |
-| ------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| **Fonts & Layout** | `libfontconfig1-dev` / `fontconfig`                       | Font matching and fallback configuration                                        |
-| **FreeType**       | `libfreetype6-dev` / `freetype2`                          | Font rendering engine for text/font previews                                    |
-| **XKB Common**     | `libxkbcommon-dev` / `libxkbcommon`                       | Keyboard keycode handling for Wayland & X11                                     |
-| **GStreamer**      | `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev` | Audio and video decoding/playback pipeline                                      |
-| **MuPDF**          | `libmupdf-dev` _(optional system bind)_                   | PDF rendering engine                                                            |
-| **Typst**          | `typst` _(optional CLI binary)_                           | Typst (`.typ`) document compilation & preview                                   |
-| **LibreOffice**    | `libreoffice` _(optional CLI binary)_                     | Office document (`.docx`, `.pptx`, `.odt`, `.ods`, `.odp`) conversion & preview |
-
-#### Installing Dependencies
-
-- **Arch Linux:**
-
-  ```bash
-  sudo pacman -Syu fontconfig freetype2 libxkbcommon gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav gst-plugin-va gst-plugins-ugly libreoffice-fresh
-  ```
-
-- **Ubuntu / Debian:**
-
-  ```bash
-  sudo apt install libfontconfig1-dev libfreetype-dev libxkbcommon-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good gstreamer1.0-plugins-bad libreoffice
-  ```
-
-- **Fedora:**
-
-  ```bash
-  sudo dnf install fontconfig-devel freetype-devel libxkbcommon-devel gstreamer1-devel gstreamer1-plugins-base-devel gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-bad-free-devel libreoffice
-  ```
-
----
-
-## Keyboard Shortcuts
-
-Kglance offers rich keyboard navigation for navigating files, zooming images, scrolling PDFs, and searching text.
-
-| Shortcut                                     | Action                                                          | Scope / Context                  |
-| :------------------------------------------- | :-------------------------------------------------------------- | :------------------------------- |
-| **General & Window**                         |                                                                 |                                  |
-| `Space` / `Escape`                           | Close preview window (or close search if open)                  | Global                           |
-| `Tab`                                        | Toggle View Mode (Detail ↔ Grid)                                | Global                           |
-| `Enter`                                      | Open file in default desktop app / Open folder entry            | Global / Folder view             |
-| `Ctrl` + `,`                                 | Open Settings view                                              | Global                           |
-| `Ctrl` + `T`                                 | Cycle color theme (Dark → Light → Nord)                         | Global                           |
-| `Ctrl` + `C`                                 | Copy file path / Copy selected text / Copy image bitmap (PNG)   | Global / Text, Documents, Images |
-| `Ctrl` + `A`                                 | Select all text                                                 | Text, Code, Markdown, EPUB       |
-| **Navigation & Playlist**                    |                                                                 |                                  |
-| `Ctrl` + `Shift` + `←` / `Ctrl` + `PageUp`   | Previous file in directory                                      | Playlist / Global                |
-| `Ctrl` + `Shift` + `→` / `Ctrl` + `PageDown` | Next file in directory                                          | Playlist / Global                |
-| `←` / `→`                                    | Seek -5s / +5s (Video, Audio) or Previous / Next chapter (EPUB) | Video, Audio, EPUB               |
-| `←` / `→`                                    | Go to parent directory / Open folder or preview file            | Folder view                      |
-| **Scrolling & Vim Navigation**               |                                                                 |                                  |
-| `↑` / `k`                                    | Scroll up (80px)                                                | Scrollable content               |
-| `↓` / `j`                                    | Scroll down (80px)                                              | Scrollable content               |
-| `←` / `→` / `h` / `l`                        | Scroll horizontally / Expand or collapse JSON tree              | Spreadsheet, JSON Tree, Code     |
-| `PageUp` / `u`                               | Scroll page / half page up                                      | Scrollable content               |
-| `PageDown` / `d`                             | Scroll page / half page down                                    | Scrollable content               |
-| `gg` / `Home` (double-tap)                   | Scroll to top                                                   | Scrollable content               |
-| `G` / `Shift` + `G` / `End`                  | Scroll to bottom                                                | Scrollable content               |
-| `gt`                                         | Toggle Table of Contents / Sidebar                              | Markdown, EPUB, PDF              |
-| `ge`                                         | Toggle File Tree sidebar (Directories & subfolders)             | Global                           |
-| `Mouse Wheel`                                | Scroll / Zoom (while holding `Ctrl`)                            | All previews                     |
-| **Search**                                   |                                                                 |                                  |
-| `Ctrl` + `F` / `/`                           | Open search bar                                                 | Text, Markdown, JSON, CSV, Grid  |
-| `Escape`                                     | Close search bar and clear query                                | Search active                    |
-| Type characters                              | Immediate type-to-search                                        | Grid view                        |
-| **Zoom & Font Scaling**                      |                                                                 |                                                |
-| `Ctrl` + `+` / `Ctrl` + `=`                  | Zoom in / Increase font size                                    | Image, PDF, Text, Code, Markdown, Spreadsheets |
-| `Ctrl` + `-`                                 | Zoom out / Decrease font size                                   | Image, PDF, Text, Code, Markdown, Spreadsheets |
-| `Ctrl` + Scroll                              | Zoom in/out / Resize                                            | Image, PDF, Text, Code, Markdown, Spreadsheets |
-| `Shift` + Scroll                             | Adjust reading column width (widen / narrow)                    | Markdown, EPUB                   |
-| `=`                                          | Fit image to window                                             | Image preview                    |
-| `Shift` + `+` / `Shift` + `=`                | Reset font size to default (14px)                               | Text, Code, Markdown, EPUB       |
-| `Shift` + `0`                                | Reset page reader width to default (820px)                       | Markdown, EPUB                   |
-| **Specific Formats**                         |                                                                 |                                  |
-| `r`                                          | Rotate image 90° clockwise                                      | Image preview                    |
-| `Shift` + `R` / `R`                          | Rotate image 90° counter-clockwise                              | Image preview                    |
-| `h`                                          | Flip image horizontally (mirror)                                | Image preview                    |
-| `v`                                          | Flip image vertically (mirror)                                  | Image preview                    |
-| `0` (or `Ctrl` + `0`)                        | Reset image zoom, pan, rotation, and flip                       | Image preview                    |
-| `Ctrl` + `W`                                 | Toggle word wrap                                                | Text, Code, JSON, Typst          |
-| `Ctrl` + `e`                                 | Expand all JSON tree nodes                                      | JSON preview                     |
-| `Ctrl` + `E` (`Shift` + `e`)                 | Collapse all JSON tree nodes                                    | JSON preview                     |
-| `Ctrl` + `P` (`Shift` + `p`)                 | Toggle JSON display (Tree vs Raw formatted)                     | JSON preview                     |
-| `s` / `S`                                    | Toggle between Compiled Preview and Source                      | Typst (`.typ`) preview           |
-
----
-
-## Installation & Setup
-
-### 1. Build from Source
-
-Ensure Rust 1.85+ (Edition 2024) is installed.
-
-```bash
-cargo build --release
+```sh
+makepkg --dir packaging/arch -si
+kglanceqt --configure-dolphin
 ```
 
-The resulting binary will be at `target/release/kglance`.
+Restart Dolphin when convenient to load the service action and shortcut. The
+setup command backs up its per-user XML configuration, assigns **Space**, removes
+the old Kglance/test shortcut entries, and preserves unrelated customizations.
+It refuses to take a shortcut assigned to an unrelated action. A different key
+can be selected with `--configure-dolphin --shortcut Ctrl+Alt+Space`.
 
-### 2. Install Dolphin Integration (KIO Service Menu)
+Package installation does not edit user settings or stop Dolphin. Before moving
+from the earlier manual installations, stop them and move their binaries and
+desktop files out of `~/.local`; otherwise those files can shadow the package.
+Keep user documents and old settings unless you deliberately want to discard them.
 
-> **Prerequisite**: Ensure `kglance` is in your `PATH` or set `BIN=/path/to/kglance`.
+System Qt/KDE libraries and viewers update through the normal package manager.
+Restart KGlanceQT after those updates. Application releases or an incompatible
+library/toolchain change require a package update/rebuild; the PKGBUILD does not
+automatically rebuild on each KDE upgrade. Test current distribution packages
+before distributing a new build.
 
-Use the setup script to install the Dolphin context menu plugin:
+## Desktop files
 
-```bash
-# Basic install (context menu only):
-./scripts/dolphin-setup.sh install
+Plasma's Folder View desktop can invoke **Preview with KGlanceQT** from a selected
+file's context menu. `desktop:/` URLs are resolved asynchronously through KIO to
+their local files. The same action also works in Dolphin.
 
-# Or fetch directly from GitHub:
-bash <(curl -s https://raw.githubusercontent.com/Mintori09/kglance/main/scripts/dolphin-setup.sh) install
+The Dolphin Space shortcut does not register Space globally. Plasma controls
+desktop keyboard handling independently; desktop **Space-to-preview is not
+implemented**. A supported desktop keyboard integration remains on the roadmap.
+
+## Preview providers and controls
+
+| Content | Native component |
+| --- | --- |
+| Text / source code | Read-only KTextEditor, including highlighting, search, selection and copy |
+| Images and SVG | QImageReader and installed Qt/KDE image plugins; wheel zoom, drag to pan, Ctrl+0 to fit |
+| PDF and supported documents | Installed Okular read-only KPart |
+| Fonts | Installed font-viewer KPart, where available |
+| Audio / video | Qt Multimedia, with play/pause and seeking |
+| Folders | QFileSystemModel and Qt tree view |
+| ZIP / TAR / 7z | KArchive listing without extraction |
+| Other formats | Installed KIO thumbnailers, then an open-in-application fallback |
+
+Space / Esc hides the preview, Alt+Left / Alt+Right moves through the supplied
+selection, Ctrl+O opens the file in its associated application, and Ctrl+Q exits
+KGlanceQT. Playback starts on request. Codec coverage follows the distribution's
+Qt Multimedia backend.
+
+```sh
+kglanceqt -- /path/to/file another-file
+kglanceqt --standalone -- /path/to/file
+kglanceqt --daemon
+kglanceqt --quit
 ```
 
-#### Optional: Auto-configure Keyboard Shortcut (`--shortcut`)
+The binary is `kglanceqt`; its DBus service/interface is `org.kglanceqt.Preview`,
+with object `/org/kglanceqt/Preview`. Per-user window settings live in
+`$XDG_CONFIG_HOME/kglanceqt/KGlanceQT.conf` (normally under `~/.config`).
 
-If you want the script to automatically register a shortcut (defaults to **Space**) in `dolphinui.rc` without manual setup:
+## Build and verify
 
-```bash
-# Automatically bind Space:
-./scripts/dolphin-setup.sh install --shortcut
+Required: a C++20 compiler, CMake, Ninja, Qt 6.6+ Widgets, XML, DBus, Concurrent
+and Multimedia, plus KF6 Parts, TextEditor, KIO, Archive and WindowSystem. Tests
+also use Qt Test, Python, DBus tools and Okular. Python is not an application
+runtime dependency. Image format plugins and thumbnails are optional enhancements.
 
-# Or fetch directly from GitHub:
-bash <(curl -s https://raw.githubusercontent.com/Mintori09/kglance/main/scripts/dolphin-setup.sh) install --shortcut
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr
+cmake --build build -j 2
+ctest --test-dir build --output-on-failure
 ```
 
-Restart Dolphin (`killall dolphin`) or log out and back in to apply the changes.
+Equivalent `just build`, `just test`, and `just fmt-check` recipes are provided.
+The DBus integration test uses a private session bus and needs permission to
+create Unix sockets; it does not address the user's live preview process.
 
-### 3. Configure Dolphin Keyboard Shortcut (Manual Alternative)
+## Current limits
 
-If you ran `install` without `--shortcut`, you can still configure the shortcut manually in Dolphin:
+Markdown opens as highlighted source, animated images display a static frame,
+and Office formats may have only a thumbnail. Rich Markdown, spreadsheet/SQLite
+tables, metadata panels, reading positions, trash/undo, custom shell actions and
+3D previews are not implemented. This is a replacement project, not a claim of
+complete feature parity with the old application. See [ROADMAP.md](ROADMAP.md).
 
-1. Open Dolphin → **Settings** → **Configure Keyboard Shortcuts**…
-2. Search for `Quick Preview` or `Quick Preview (KIO)`
-3. Assign the **Space** key as the shortcut
-
-Now select any supported file and press **Space** to preview.
-
-To remove the integration and shortcut:
-
-```bash
-./scripts/dolphin-setup.sh uninstall
-
-# Or fetch directly from GitHub:
-bash <(curl -s https://raw.githubusercontent.com/Mintori09/kglance/main/scripts/dolphin-setup.sh) uninstall
-```
-
-### 4. Setup Yazi Terminal File Manager Integration (Option)
-
-To integrate Kglance with [Yazi](https://github.com/sxyazi/yazi) for real-time hover sync and `<Space>` preview:
-
-#### Step 1: Download the plugin
-
-Download `main.lua` into your Yazi plugins directory:
-
-```bash
-mkdir -p ~/.config/yazi/plugins/kglance.yazi
-curl -fsSL https://raw.githubusercontent.com/Mintori09/kglance/main/kglance.yazi/main.lua -o ~/.config/yazi/plugins/kglance.yazi/main.lua
-```
-
-#### Step 2: Enable hover sync in `init.lua`
-
-Add the following line to `~/.config/yazi/init.lua` (create the file if it does not exist):
-
-```lua
-require("kglance"):setup()
-```
-
-#### Step 3: Configure `<Space>` shortcut in `keymap.toml`
-
-Add the keymap under `[[mgr.prepend_keymap]]` in `~/.config/yazi/keymap.toml`:
-
-```toml
-[[mgr.prepend_keymap]]
-on   = [ "<Space>" ]
-run  = "shell --orphan -- kglance %h"
-desc = "Open hovered file with kglance"
-```
-
----
-
-## Usage
-
-```bash
-# Start background Daemon (Listens on DBus: org.mintori.Kglance)
-kglance daemon
-
-# Preview a file (Auto-detects Daemon or falls back to Standalone)
-kglance /path/to/file
-
-# Force Standalone mode
-kglance --standalone /path/to/file
-```
-
----
-
-## Configuration
-
-Kglance reads a JSON config file from:
-
-| Platform  | Path                            |
-| --------- | ------------------------------- |
-| **Linux** | `~/.config/kglance/config.json` |
-
-The config file is auto-created with defaults on first run. See `data/examples/config.example.json` for all available options:
-
-```json
-{
-  "ui": {
-    "theme": "Dark",
-    "font_size": 14.0,
-    "default_width": 1024,
-    "default_height": 768,
-    "min_width": 800,
-    "min_height": 600,
-    "font_family": "Noto Sans",
-    "font_family_mono": "Fira Code",
-    "epub_font_family": "Noto Serif",
-    "epub_reading_mode": "single_chapter", // single_chapter | continuous
-    "max_text_width": 820.0,
-    "prefer_mermaid_cli": false,
-    "word_wrap": false,
-    "json_tree_view": true,
-    "ruby_display_mode": "stacked" // stacked | tooltip | parentheses | hidden
-  },
-  "cache": {
-    "max_memory_mb": 512,
-    "max_disk_cache_mb": 1024
-  },
-  "scroll": {
-    "smooth_scroll_enabled": true,
-    "friction": 1.8,
-    "spring_stiffness": 180.0
-  },
-  "selection_menu": {
-    "enabled": true,
-    "custom_actions": [
-      {
-        "name": "translate",
-        "command": "trans -b :vi",
-        "popup": true,
-        "toast": false,
-        "stream": false
-      }
-    ]
-  }
-```
-
-Custom actions receive selected text via `stdin` and the `$KGLANCE_TEXT` environment variable. In addition, file context is automatically exposed:
-- `$KGLANCE_FILE`: Absolute path to the previewed file.
-- `$KGLANCE_FILE_DIR`: Parent directory containing the previewed file.
-- `$KGLANCE_FILE_NAME`: File name with extension (e.g. `document.md`).
-- `$KGLANCE_FILE_STEM`: File base name without extension (e.g. `document`).
-- `$KGLANCE_FILE_EXT`: Lowercased file extension (e.g. `md`).
-- Command working directory (`cwd`): Executed in `$KGLANCE_FILE_DIR` when available, falling back to `$HOME`.
-
-For a full guide on configuring shell actions, AI streaming, and file context variables, see the [Custom Actions Guide](docs/user-guide/custom-actions.md). For full configuration options, see [`data/examples/config.example.json`](data/examples/config.example.json).
-
----
-
-## Roadmap
-
-### Completed (v0.4.4)
-
-- [x] Text Selection & Rich Copy (plain text & HTML) across PDF, Markdown, EPUB, and Source Code.
-- [x] Floating Selection Context Menu with configurable shell actions (streaming, toast, popup).
-- [x] Furigana / Ruby text rendering in Markdown and EPUB (`<ruby><rb>...<rt>...`).
-- [x] Directory File Tree sidebar (`ge`) alongside Document Sidebar (`gt`).
-- [x] Animated GIF decoding & playback frame timing engine.
-- [x] Lossless image rotation (`r`/`Shift+R`), flipping (`h`/`v`), and bitmap pixel clipboard copy (`Ctrl+C`).
-- [x] SQLite database inspector (`.sqlite`, `.db`) rendered as multi-tab interactive spreadsheets.
-- [x] Spreadsheet font size scaling (`Ctrl+=`, `Ctrl+-`, `Ctrl+Wheel`).
-- [x] Physics-based smooth scrolling with VSync synchronization and touchpad kinetic fling.
-
-### Next Priorities
-
-- [ ] In-PDF Text Search (`Ctrl+F` & Bounding Box Highlight)
-- [x] Cache image from url.
-
----
-
-## License
-
-Distributed under the GNU AGPL-3.0-only. See `LICENSE` for more information.
+Text previews are limited to 16 MiB; images to 64 megapixels and a 256 MiB reader
+allocation budget; archive listings to 10,000 entries. Worker jobs use two threads
+and request generations prevent stale results. Archive traversal checks
+cancellation, but an image decode already running cannot be interrupted. KParts
+load in-process; their responsiveness and resource use still require benchmarks.
+Remote network URLs are not downloaded by the application.

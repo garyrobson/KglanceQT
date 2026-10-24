@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=KGlanceQT Preview
+MimeType=all/all;
+Actions=previewWithKGlanceQT;
+X-KDE-Priority=TopLevel
+
+[Desktop Action previewWithKGlanceQT]
+Name=Preview with KGlanceQT
+Icon=preview
+Exec="@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/kglanceqt" -- %U
