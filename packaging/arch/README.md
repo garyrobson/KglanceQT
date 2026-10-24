@@ -36,3 +36,26 @@ restarting the app. Rebuild/test when a dependency changes ABI or toolchain
 compatibility, and when producing an updated application package. A locally
 installed package does not receive application updates from pacman until a
 repository serves those versions (or you build/install a new package yourself).
+
+## Working-tree packages and CI
+
+Run `just package-snapshot` for unpublished local work. The snapshot helper keeps
+the tagged recipe intact, archives the current source (including uncommitted
+implementation), excludes build/VCS/cache directories and local settings, writes
+a separate PKGBUILD with a real checksum and `.SRCINFO`, and runs makepkg as the
+normal user. Artifacts remain under `pkg/snapshot-*`. Use `--prepare-only` to
+review the archive/recipe before running makepkg. Never run this helper as root.
+
+The distribution package enables `KGLANCEQT_WITH_SQLITE` and declares
+`sqlite>=3.41`; direct CMake builds keep it optional. CI checks both feature
+settings against `archlinux:base-devel` and the distribution's
+[`cachyos/cachyos:latest`](https://hub.docker.com/r/cachyos/cachyos) image on pushes,
+PRs, weekly and manual runs. Package builds run as an unprivileged builder and
+retain packages, source tarballs and recipes as workflow artifacts. Current
+rolling dependency versions are resolved on each run. CI itself must run on
+GitHub to validate container-specific behaviour.
+
+Release publication remains deliberate: review the built artifacts and tests,
+then create the authorized immutable source tag and attach the verified source
+archive, package and recipe to the release. This workflow does not automatically
+publish or update installed systems.

@@ -109,10 +109,13 @@ MetadataEditor::MetadataEditor(const QUrl &url, QWidget *parent) : QDialog(paren
     auto *form = new QFormLayout;
     rating_ = new KRatingWidget(this);
     rating_->setHalfStepsEnabled(true);
+    rating_->setAccessibleName(tr("File rating"));
     tags_ = new QPlainTextEdit(this);
     tags_->setObjectName(QStringLiteral("metadataTags"));
+    tags_->setAccessibleName(tr("File tags, one per line"));
     comment_ = new QPlainTextEdit(this);
     comment_->setObjectName(QStringLiteral("metadataComment"));
+    comment_->setAccessibleName(tr("File comment"));
     form->addRow(tr("Rating:"), rating_);
     form->addRow(tr("Tags (one per line):"), tags_);
     form->addRow(tr("Comment:"), comment_);

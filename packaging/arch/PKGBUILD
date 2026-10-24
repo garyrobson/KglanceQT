@@ -7,8 +7,8 @@ pkgdesc='Native Qt 6 and KDE Frameworks 6 file previews for Dolphin and Plasma'
 arch=('x86_64')
 url='https://github.com/garyrobson/KglanceQT'
 license=('AGPL-3.0-only')
-depends=('glibc' 'gcc-libs' 'qt6-base>=6.6' 'qt6-multimedia'
-         'kparts' 'ktexteditor' 'kio' 'karchive' 'kwindowsystem' 'baloo-widgets' 'kwidgetsaddons' 'kfilemetadata>=6.2')
+depends=('glibc' 'gcc-libs' 'qt6-base>=6.6' 'qt6-multimedia' 'sqlite>=3.41'
+         'kparts' 'ktexteditor' 'kio' 'karchive' 'kwindowsystem' 'baloo-widgets' 'kwidgetsaddons' 'kfilemetadata>=6.2' 'kxmlgui' 'kconfigwidgets' 'kiconthemes>=6.3' 'kcolorscheme')
 makedepends=('cmake' 'ninja' 'python')
 checkdepends=('dbus' 'glib2' 'qt6-tools' 'okular')
 optdepends=('okular: PDF and supported document previews'
@@ -28,7 +28,8 @@ build() {
         -DCMAKE_BUILD_TYPE=None \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_INSTALL_LIBDIR=lib \
-        -DBUILD_TESTING=ON
+        -DBUILD_TESTING=ON \
+        -DKGLANCEQT_WITH_SQLITE=ON
     cmake --build "$srcdir/build" --parallel 2
 }
 

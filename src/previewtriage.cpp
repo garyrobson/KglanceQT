@@ -62,6 +62,11 @@ void PreviewWindow::updateTriageActions()
     trashAction_->setEnabled(isVisible() && !paths_.isEmpty() && currentUrl_.isLocalFile() &&
                              (file.exists() || file.isSymLink()) && !triage_->busy());
     undoTrashAction_->setEnabled(triage_->canUndo());
+    const bool available = isVisible() && !paths_.isEmpty() && currentUrl_.isValid();
+    for (const auto *name :
+         {"openInApplication", "openWith", "showInFileManager", "copyLocation", "refreshPreview"})
+        if (auto *action = findChild<QAction *>(QString::fromLatin1(name)))
+            action->setEnabled(available);
 }
 
 void PreviewWindow::trashCurrent()

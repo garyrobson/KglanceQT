@@ -1,21 +1,49 @@
 name: Native build and tests
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 6 * * 1'
 permissions:
   contents: read
 jobs:
   arch:
     runs-on: ubuntu-latest
-    container: archlinux:base-devel
+    container: ${{ matrix.container }}
+    strategy:
+      matrix:
+        sqlite: ['ON', 'OFF']
+        container: ['archlinux:base-devel', 'cachyos/cachyos:latest']
     steps:
       - name: Install distribution dependencies
         run: >-
-          pacman -Syu --noconfirm --needed git cmake ninja qt6-base qt6-multimedia
+          pacman -Syu --noconfirm --needed base-devel git cmake ninja qt6-base qt6-multimedia
           qt6-tools kparts ktexteditor kio karchive kwindowsystem baloo-widgets
-          kwidgetsaddons kfilemetadata okular python dbus
+          kwidgetsaddons kfilemetadata kxmlgui kconfigwidgets kiconthemes kcolorscheme okular python dbus glib2 sqlite clang
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DKGLANCEQT_WITH_SQLITE=${{ matrix.sqlite }}
       - name: Build
         run: cmake --build build -j 2
       - name: Test
         run: dbus-run-session -- ctest --test-dir build --output-on-failure
+      - name: Check formatting
+        run: clang-format --dry-run --Werror src/*.cpp src/*.h tests/*.cpp
+      - name: Build Arch package from tested source
+        if: matrix.sqlite == 'ON'
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- python packaging/arch/build-snapshot.py
+      - name: Retain package and source recipe
+        if: matrix.sqlite == 'ON'
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-and-source-${{ strategy.job-index }}
+          include-hidden-files: true
+          path: |
+            pkg/snapshot-*/*.pkg.tar.zst
+            pkg/snapshot-*/*.tar.gz
+            pkg/snapshot-*/PKGBUILD
+            pkg/snapshot-*/.SRCINFO

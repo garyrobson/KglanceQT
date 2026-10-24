@@ -44,32 +44,47 @@ preview defaults, limits, and Dolphin shortcut configuration.
   column sizing, bounded parsing, and visible row/column truncation limits.
 - [x] Preview remote KIO URLs such as SFTP/SMB using bounded, cancellable temporary
   transfers with clear progress, cleanup, and no stale results after navigation.
-- [ ] Evaluate native office/spreadsheet, SQLite table, and reading-position support;
+- [x] Evaluate native office/spreadsheet, SQLite table, and reading-position support;
   keep specialized features optional when their dependency cost is high.
+  Evaluation and decisions: [native formats](docs/NATIVE_FORMATS.md). Table reading
+  positions and the optional SQLite provider are implemented; rendered Office
+  previews remain separate work.
+- [x] Implement an optional bounded, read-only SQLite provider. Local standalone
+  snapshots are supported; live WAL/journal databases are explicitly rejected.
+  See [provider policy and limits](docs/NATIVE_FORMATS.md).
 
 ### KDE polish and validation
 
-- [ ] **High priority:** Create a distinctive application icon that communicates
+- [x] **High priority:** Create a distinctive application icon that communicates
   quick file previewing and looks at home in Plasma's Breeze theme. Provide a
   scalable icon with clear small-size variants, verify it against light and dark
   panels, and use it consistently in the launcher, task switcher, and window.
-- [ ] Adopt KDE standard actions/shortcuts where appropriate and provide configurable
+- [x] Adopt KDE standard actions/shortcuts where appropriate and provide configurable
   application shortcuts while preserving Space as the default preview activator.
-- [ ] Audit keyboard focus, accessible names, screen-reader behaviour, and Breeze
+- [x] Audit keyboard focus, accessible names, screen-reader behaviour, and Breeze
   light/dark appearance, including readable previews in custom colour schemes.
 
 ## Integration and release priorities
 
-- Test Plasma Wayland focus/activation, multi-monitor scaling and theme changes
-  interactively on current distribution packages.
-- Measure cold launch, resident show, first useful content, transitions, idle CPU,
-  and peak/idle memory before making performance claims.
-- Validate the desktop context-menu action across custom desktop locations and
-  multiple selections. Investigate a supported desktop Space integration without
-  intercepting Space in unrelated applications or replacing distribution QML.
-- Extend preferences as new providers and reading-position options are added.
-- Automate package builds against current Arch/CachyOS dependencies and publish
-  application releases with source archives and package recipes.
+- [x] Validate Plasma Wayland focus/activation, monitor transitions, mixed scaling
+  and theme changes on current packages. Automated native runs cover the actual
+  2× display and an isolated two-output KWin at 1×/1.5×; see
+  [validation coverage](docs/PLASMA_VALIDATION.md).
+- [ ] Repeat multi-monitor checks with physical mixed-DPI outputs/hot-plugging
+  and verify spoken output with Orca before release.
+- [x] Add repeatable local measurements for daemon startup, resident show, first
+  useful content, transitions, idle CPU and RSS. Recorded samples and measurement
+  limits: [performance](docs/PERFORMANCE.md).
+- [x] Validate KIO context-menu discovery across single/multiple selections and
+  custom desktop URL navigation. Investigate supported desktop Space integration;
+  no exposed Folder View hook was found. [Details](docs/DESKTOP_INTEGRATION.md).
+- [ ] Complete the human Plasma menu/input-activation checks described in the
+  desktop integration notes.
+- [x] Add SQLite enable/row limits and optional session position memory to preferences.
+- [x] Automate working-tree makepkg builds and configure scheduled Arch/CachyOS
+  CI with SQLite enabled/disabled, retaining source archives and package recipes.
+- [ ] Run the expanded CI matrix on GitHub and publish authorized application
+  releases after the remaining hardware/accessibility checks.
 
 ## Architecture constraints
 

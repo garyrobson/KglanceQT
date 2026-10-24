@@ -13,6 +13,8 @@ ImageView::ImageView(const QImage &image, QWidget *parent)
     : QGraphicsView(parent), scene_(this), pixmap_(scene_.addPixmap(QPixmap::fromImage(image)))
 {
     setScene(&scene_);
+    setAccessibleName(tr("Image preview"));
+    setAccessibleDescription(tr("Use the mouse wheel to zoom and drag to pan."));
     setRenderHint(QPainter::SmoothPixmapTransform);
     setDragMode(ScrollHandDrag);
     setTransformationAnchor(AnchorUnderMouse);

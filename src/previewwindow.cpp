@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "previewwindow.h"
+#include "appshortcuts.h"
 #include "filedragbutton.h"
 #include "filetriage.h"
 #include "imagecomparison.h"
@@ -15,6 +16,17 @@
 #include "selectionfilmstrip.h"
 #include "supportedtypesdialog.h"
 #include "tableview.h"
+#ifdef KGLANCEQT_WITH_SQLITE
+#include "sqlitepreview.h"
+#endif
+#include <KStandardAction>
+#include <KStandardShortcut>
+#include <QAbstractButton>
+#include <QAbstractItemView>
+#include <QAbstractSlider>
+#include <QAbstractSpinBox>
+#include <QComboBox>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 
@@ -64,10 +76,12 @@ PreviewWindow::PreviewWindow(bool standalone)
     : content_(new QStackedWidget(this)), info_(new QLabel(this)),
       information_(new InformationPanel(this)), filmstrip_(new SelectionFilmstrip(this)),
       dragFile_(new FileDragButton(this)), fileMonitor_(new FileMonitor(this)),
-      fileNotice_(new KMessageWidget(this)), triage_(new FileTriage(this)),
-      operationNotice_(new KMessageWidget(this)), standalone_(standalone)
+      fileNotice_(new KMessageWidget(this)), shortcuts_(new AppShortcuts(this)),
+      triage_(new FileTriage(this)), operationNotice_(new KMessageWidget(this)),
+      standalone_(standalone)
 {
-    setWindowIcon(QIcon::fromTheme(QStringLiteral("preview")));
+    setWindowIcon(QIcon::fromTheme(QStringLiteral("org.kglanceqt.KGlanceQT"),
+                                   QIcon(QStringLiteral(":/icons/app.png"))));
     auto *central = new QWidget(this);
     auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -114,21 +128,23 @@ PreviewWindow::PreviewWindow(bool standalone)
         item->setShortcut(shortcut);
         return item;
     };
-    action(QStringLiteral("go-previous"), tr("Previous file"), QKeySequence(Qt::ALT | Qt::Key_Left),
-           [this] { navigate(-1); });
-    action(QStringLiteral("go-next"), tr("Next file"), QKeySequence(Qt::ALT | Qt::Key_Right),
-           [this] { navigate(1); });
+    auto *previous = action(QStringLiteral("go-previous"), tr("Previous file"),
+                            QKeySequence(Qt::ALT | Qt::Key_Left), [this] { navigate(-1); });
+    auto *next = action(QStringLiteral("go-next"), tr("Next file"),
+                        QKeySequence(Qt::ALT | Qt::Key_Right), [this] { navigate(1); });
+    shortcuts_->add(previous, QStringLiteral("previousFile"));
+    shortcuts_->add(next, QStringLiteral("nextFile"));
     toolbar->addSeparator();
-    action(QStringLiteral("document-open"), tr("Open in application"),
-           QKeySequence(Qt::CTRL | Qt::Key_O),
-           [this]
-           {
-               if (currentUrl_.isValid())
-               {
-                   auto *job = new KIO::OpenUrlJob(currentUrl_);
-                   job->start();
-               }
-           });
+    auto *open = action(QStringLiteral("document-open"), tr("Open in application"),
+                        QKeySequence(Qt::CTRL | Qt::Key_O),
+                        [this]
+                        {
+                            if (currentUrl_.isValid())
+                            {
+                                auto *job = new KIO::OpenUrlJob(currentUrl_);
+                                job->start();
+                            }
+                        });
     toolbar->addWidget(dragFile_);
     animationPlayback_ =
         action(QStringLiteral("media-playback-pause"), tr("Pause animation"), {},
@@ -147,9 +163,11 @@ PreviewWindow::PreviewWindow(bool standalone)
                    image->fit();
                }
            });
+    shortcuts_->add(open, QStringLiteral("openInApplication"));
     toolbar->addSeparator();
-    action(QStringLiteral("window-close"), tr("Hide preview"), QKeySequence(Qt::Key_Escape),
-           [this] { HidePreview(); });
+    auto *hide = action(QStringLiteral("window-close"), tr("Hide preview"),
+                        QKeySequence(Qt::Key_Escape), [this] { HidePreview(); });
+    shortcuts_->add(hide, QStringLiteral("hidePreview"));
     auto *menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("applicationMenu"));
     compareImages_ = menu->addAction(QIcon::fromTheme(QStringLiteral("view-split-left-right")),
@@ -197,7 +215,7 @@ PreviewWindow::PreviewWindow(bool standalone)
                                         loadCurrent();
                                     });
     refresh->setObjectName(QStringLiteral("refreshPreview"));
-    refresh->setShortcut(QKeySequence::Refresh);
+    refresh->setShortcuts(KStandardShortcut::reload());
     addAction(refresh);
     connect(menu, &QMenu::aboutToShow, this,
             [this, openWith, reveal, copyLocation, refresh]
@@ -210,7 +228,7 @@ PreviewWindow::PreviewWindow(bool standalone)
     auto *quit = menu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")),
                                  tr("Quit KGlanceQT"), this, &PreviewWindow::Quit);
     quit->setObjectName(QStringLiteral("quitKGlanceQT"));
-    quit->setShortcut(QKeySequence::Quit);
+    quit->setShortcuts(KStandardShortcut::quit());
     quit->setStatusTip(
         tr("Stop the background preview service. Use Dolphin's preview action to start it again."));
     addAction(quit);
@@ -261,9 +279,9 @@ PreviewWindow::PreviewWindow(bool standalone)
     auto *spacer = new QWidget(toolbar);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar->addWidget(spacer);
-    auto *configure =
-        action(QStringLiteral("configure"), tr("Configure KGlanceQT…"),
-               QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Comma), [this] { showPreferences(); });
+    auto *configure = KStandardAction::preferences(this, &PreviewWindow::showPreferences, this);
+    configure->setText(tr("Configure KGlanceQT…"));
+    toolbar->addAction(configure);
     configure->setObjectName(QStringLiteral("configureKGlanceQT"));
     menu->insertAction(quit, configure);
     auto *help = new QMenu(tr("Help"), menu);
@@ -293,17 +311,55 @@ PreviewWindow::PreviewWindow(bool standalone)
                     information_->clear();
                 }
             });
+    auto *keys = KStandardAction::keyBindings(shortcuts_, &AppShortcuts::showDialog, this);
+    keys->setObjectName(QStringLiteral("configureShortcuts"));
+    menu->insertAction(quit, keys);
+    for (auto *item :
+         {compareImages_, trashAction_, undoTrashAction_, openWith, reveal, copyLocation, refresh,
+          quit, informationAction, filmstripAction, clearPositions, configure, keys})
+        shortcuts_->add(item, item->objectName());
+    // Space belongs to the preview window only; the file-manager activator remains separate.
+    shortcuts_->add(toggle, QStringLiteral("togglePreview"), false);
+    shortcuts_->load();
+    toggle->setShortcut(QKeySequence(Qt::Key_Space));
     qApp->installEventFilter(this);
 }
 
 bool PreviewWindow::eventFilter(QObject *watched, QEvent *event)
 {
     auto *widget = qobject_cast<QWidget *>(watched);
+    bool interactive = false;
+    for (auto *control = widget; control && control != this; control = control->parentWidget())
+    {
+        if (qobject_cast<QLineEdit *>(control) || qobject_cast<QAbstractSpinBox *>(control) ||
+            qobject_cast<QAbstractSlider *>(control) || qobject_cast<QAbstractButton *>(control) ||
+            qobject_cast<QComboBox *>(control) || qobject_cast<QAbstractItemView *>(control) ||
+            qobject_cast<QPlainTextEdit *>(control))
+        {
+            interactive = true;
+            break;
+        }
+    }
+    if (isVisible() && widget && widget->window() == this && interactive &&
+        event->type() == QEvent::ShortcutOverride)
+    {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->modifiers() == Qt::NoModifier &&
+            (key->key() == Qt::Key_Space || key->key() == Qt::Key_Left ||
+             key->key() == Qt::Key_Right))
+        {
+            key->accept();
+            return true;
+        }
+    }
+
     if (isVisible() && widget && widget->window() == this &&
         (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress))
     {
         auto *key = static_cast<QKeyEvent *>(event);
-        if (key->matches(QKeySequence::Refresh))
+        if (findChild<QAction *>(QStringLiteral("refreshPreview"))
+                ->shortcuts()
+                .contains(QKeySequence(key->keyCombination())))
         {
             // Embedded viewers also register Refresh. Keep one window-level
             // operation so the active provider and its monitor refresh together.
@@ -320,8 +376,7 @@ bool PreviewWindow::eventFilter(QObject *watched, QEvent *event)
         togglePlayback();
         return true;
     }
-    if (isVisible() && paths_.size() > 1 && widget && !qobject_cast<QLineEdit *>(widget) &&
-        widget->window() == this &&
+    if (isVisible() && paths_.size() > 1 && widget && !interactive && widget->window() == this &&
         (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress))
     {
         auto *key = static_cast<QKeyEvent *>(event);
@@ -407,6 +462,8 @@ void PreviewWindow::clearContent()
 void PreviewWindow::HidePreview()
 {
     information_->closeEditor();
+    if (auto *keys = findChild<QDialog *>(QStringLiteral("applicationShortcutsDialog")))
+        keys->reject();
     ++selectionSession_;
     if (comparison_)
         comparison_->close();
@@ -440,6 +497,8 @@ void PreviewWindow::showPreferences()
         [this]
         {
             const auto settings = readPreferences();
+            if (!settings.rememberPositions)
+                clearPositions();
             findChild<QAction *>(QStringLiteral("showFilmstrip"))->setChecked(settings.filmstrip);
             information_->setVisible(settings.information);
             if (settings.information && isVisible())
@@ -509,7 +568,7 @@ void PreviewWindow::clearPositions()
 
 void PreviewWindow::rememberPosition()
 {
-    if (positionPending_)
+    if (!readPreferences().rememberPositions || positionPending_)
         return;
     auto *widget = content_->currentWidget();
     if (auto *image = dynamic_cast<ImageView *>(widget))
@@ -517,6 +576,8 @@ void PreviewWindow::rememberPosition()
     auto &position = positions_[currentUrl_];
     if (auto *markdown = qobject_cast<MarkdownView *>(widget))
         position.markdown = markdown->position();
+    else if (auto *table = qobject_cast<TableView *>(widget))
+        position.table = table->position();
     else if (auto *text = qobject_cast<KTextEditor::View *>(widget))
         position.text = textPosition(text);
     else if (auto *media = dynamic_cast<MediaView *>(widget))
@@ -529,9 +590,11 @@ void PreviewWindow::message(const QString &text)
 {
     const auto mime = QMimeDatabase().mimeTypeForUrl(currentUrl_);
     auto *surface = new PreviewSurface(mime, content_);
+    surface->setAccessibleName(tr("Preview information"));
     auto *layout = new QVBoxLayout(surface);
     auto *label = new QLabel(text, surface);
     label->setTextFormat(Qt::PlainText);
+    label->setAccessibleName(text);
     label->setAlignment(Qt::AlignCenter);
     label->setWordWrap(true);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -641,6 +704,8 @@ void PreviewWindow::loadLocal(const QUrl &url)
 {
     if (!remote_)
         currentUrl_ = url;
+    if (!readPreferences().rememberPositions)
+        clearPositions();
     const auto request = generation_;
     if (!url.isLocalFile())
     {
@@ -664,6 +729,7 @@ void PreviewWindow::loadLocal(const QUrl &url)
         dragFile_->setFile(url, QIcon::fromTheme(mime.iconName()));
     if (information_->isVisible())
         information_->setFile(currentUrl_);
+    info_->setAccessibleName(tr("Preview status"));
     info_->setText(tr("%1 / %2 · %3").arg(index_ + 1).arg(paths_.size()).arg(mime.comment()));
     info_->setToolTip(remote_ ? currentUrl_.toDisplayString() : path);
     if (!file.exists())
@@ -747,16 +813,34 @@ void PreviewWindow::loadLocal(const QUrl &url)
     {
         showMedia(url, mime.name());
     }
+#ifdef KGLANCEQT_WITH_SQLITE
+    else if (mime.inherits(QStringLiteral("application/vnd.sqlite3")) ||
+             mime.inherits(QStringLiteral("application/x-sqlite3")) ||
+             QStringList{QStringLiteral("sqlite"), QStringLiteral("sqlite3"), QStringLiteral("db")}
+                 .contains(file.suffix().toLower()))
+    {
+        if (remote_)
+            message(tr("SQLite previews require a local standalone database; remote copies may "
+                       "omit journals."));
+        else if (!readPreferences().sqliteEnabled)
+            message(tr("SQLite previews are disabled in Configure KGlanceQT…."));
+        else
+            showContent(new SQLiteView(path, content_));
+    }
+#endif
     else if (mime.inherits(QStringLiteral("text/csv")) ||
              QStringList{QStringLiteral("csv"), QStringLiteral("tsv")}.contains(
                  file.suffix().toLower()))
     {
-        showContent(
+        auto *table =
             new TableView(path,
                           file.suffix().compare(QStringLiteral("tsv"), Qt::CaseInsensitive) == 0
                               ? QLatin1Char('\t')
                               : QLatin1Char(','),
-                          content_));
+                          content_);
+        if (const auto saved = positions_.value(currentUrl_).table)
+            table->restorePosition(*saved);
+        showContent(table);
     }
     else if (mime.inherits(QStringLiteral("text/markdown")) ||
              QStringList{QStringLiteral("md"), QStringLiteral("markdown"), QStringLiteral("mkd")}

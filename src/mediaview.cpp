@@ -69,8 +69,6 @@ MediaView::MediaView(const QUrl &url, const QMimeType &mime, QWidget *parent)
         controls->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         controls->setFrameShape(QFrame::StyledPanel);
         controls->setAutoFillBackground(true);
-        auto colors = palette();
-        controls->setPalette(colors);
         row->addWidget(controls, 1);
         row->addStretch();
         controlsLayout = new QVBoxLayout(controls);

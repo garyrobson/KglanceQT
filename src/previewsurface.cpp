@@ -14,10 +14,6 @@ PreviewSurface::PreviewSurface(const QMimeType &mime, QWidget *parent) : QWidget
     icon_ = QIcon::fromTheme(
         mime.iconName(),
         QIcon::fromTheme(mime.genericIconName(), style()->standardIcon(QStyle::SP_FileIcon)));
-    auto colors = palette();
-    colors.setColor(QPalette::Window, QColor(16, 17, 20));
-    colors.setColor(QPalette::WindowText, QColor(230, 232, 236));
-    setPalette(colors);
 }
 
 void PreviewSurface::paintEvent(QPaintEvent *)

@@ -48,6 +48,14 @@ SupportedTypesDialog::SupportedTypesDialog(QWidget *parent) : QDialog(parent)
             tr("Searchable, sortable read-only tables with selectable cells and TSV copy. All rows "
                "are data. Up to 16 MiB, 10,000 rows, 256 columns and 100,000 cells; partial "
                "results are clearly marked."));
+#ifdef KGLANCEQT_WITH_SQLITE
+    section(tr("SQLite databases"),
+            tr("Optional read-only previews of local standalone SQLite databases. Choose an "
+               "ordinary table, search, sort and copy cells. Live WAL/journal databases, views, "
+               "generated columns and virtual tables are excluded. Limits: 512 MiB input, five "
+               "seconds, 128 tables, 256 columns, 100,000 cells and 4 KiB text cells. Configure "
+               "the row limit in preferences."));
+#endif
     section(tr("Markdown"),
             tr(".md, .markdown, and .mkd files, and files recognized as Markdown. Rendered preview "
                "and source views, with tables and local images. Large documents open as source."));
@@ -78,6 +86,21 @@ SupportedTypesDialog::SupportedTypesDialog(QWidget *parent) : QDialog(parent)
                                       {"application/epub+zip", "EPUB"}})
         if (hasViewer(QString::fromLatin1(mime), QStringLiteral("okularpart")))
             documents.append(QString::fromLatin1(label));
+    QStringList office;
+    for (const auto &[mime, label] :
+         {std::pair{"application/vnd.oasis.opendocument.text", "ODT"},
+          {"application/vnd.oasis.opendocument.spreadsheet", "ODS"},
+          {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "DOCX"},
+          {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "XLSX"}})
+        if (hasViewer(QString::fromLatin1(mime), QStringLiteral("okularpart")))
+            office.append(QString::fromLatin1(label));
+    section(tr("Office documents and spreadsheets"),
+            office.isEmpty() ? tr("No compatible native Office document viewer was detected for "
+                                  "ODT, ODS, DOCX or XLSX. Installed KDE thumbnailers may provide "
+                                  "previews; use Open in application for the full file.")
+                             : tr("Installed native document viewer detected for: %1. Other Office "
+                                  "formats may use installed KDE thumbnails.")
+                                   .arg(office.join(QStringLiteral(", "))));
     section(tr("Documents"),
             documents.isEmpty()
                 ? tr("No supported Okular document viewer was detected. Install Okular to add "

@@ -3,6 +3,8 @@
 #pragma once
 
 #include <KTextEditor/Cursor>
+#include <QString>
+#include <QtCore/qnamespace.h>
 #include <optional>
 
 class QObject;
@@ -33,12 +35,22 @@ struct MediaPosition
     bool playing = false;
 };
 
+struct TablePosition
+{
+    QString query;
+    int sortColumn = -1;
+    Qt::SortOrder sortOrder = Qt::AscendingOrder;
+    int vertical = 0, horizontal = 0;
+    int currentRow = -1, currentColumn = -1;
+};
+
 struct PreviewPosition
 {
     std::optional<TextPosition> text;
     std::optional<MarkdownPosition> markdown;
     std::optional<MediaPosition> media;
     std::optional<uint> page;
+    std::optional<TablePosition> table;
 };
 
 TextPosition textPosition(KTextEditor::View *view);

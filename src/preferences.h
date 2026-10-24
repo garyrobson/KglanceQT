@@ -13,6 +13,9 @@ struct PreviewPreferences
     bool markdownSource = false;
     bool information = false;
     bool filmstrip = false;
+    bool rememberPositions = true;
+    bool sqliteEnabled = true;
+    int sqliteRows = 1000;
     int volume = 100;
     int textMiB = 16;
     int imageMP = 64;

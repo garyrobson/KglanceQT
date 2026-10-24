@@ -6,18 +6,51 @@
 #include "markdownview.h"
 #include "metadataeditor.h"
 #include "preferences.h"
+#include "previewsurface.h"
 #include "previewwindow.h"
 #include "providers.h"
 #include "remotepreview.h"
 #include "selectionfilmstrip.h"
 #include "tableview.h"
+#ifdef KGLANCEQT_WITH_SQLITE
+#include "sqlitepreview.h"
+#include <sqlite3.h>
+#endif
+#include <KColorScheme>
+#include <KColorSchemeManager>
+#include <KConfigGroup>
 #include <KFileMetaData/UserMetaData>
+#include <KIconTheme>
+#include <KSharedConfig>
+#include <KShortcutsDialog>
+#include <KStandardShortcut>
+#include <KWaylandExtras>
+#include <QAccessible>
+#include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusInterface>
+#include <QDBusReply>
+#include <QDateTime>
 #include <QDialogButtonBox>
+#include <QElapsedTimer>
+#include <QFutureWatcher>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMimeDatabase>
 #include <QPlainTextEdit>
+#include <QScopeGuard>
+#include <QScreen>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QVBoxLayout>
+#include <QWindow>
+#include <kcolorscheme_version.h>
+#include <kwindowsystem_version.h>
 
 #include <KActionCollection>
+#include <KFileItemActions>
+#include <KFileItemListProperties>
 #include <KIO/PreviewJob>
 #include <KMessageWidget>
 #include <KParts/ReadOnlyPart>
@@ -82,12 +115,18 @@ bool replacePreviewFile(const QString &path, const QByteArray &data)
 class WindowTests final : public QObject
 {
     Q_OBJECT
+  public:
+    static void initMain() { KIconTheme::initTheme(); }
   private Q_SLOTS:
     void init()
     {
         QCoreApplication::setOrganizationName(QStringLiteral("kglanceqt-tests"));
         QVERIFY(QSettings().fileName().startsWith(QCoreApplication::applicationDirPath()));
         QSettings().clear();
+        auto shortcutConfig = KSharedConfig::openConfig(QStringLiteral("kglanceqtshortcutsrc"),
+                                                        KConfig::SimpleConfig);
+        KConfigGroup(shortcutConfig, QStringLiteral("Shortcuts")).deleteGroup();
+        shortcutConfig->sync();
     }
 
     void applicationMenuAndCopyLocation()
@@ -109,7 +148,7 @@ class WindowTests final : public QObject
         QVERIFY(quit);
         QCOMPARE(button->menu(), menu);
         QVERIFY(menu->actions().contains(quit));
-        QCOMPARE(quit->shortcut(), QKeySequence(QKeySequence::Quit));
+        QCOMPARE(quit->shortcuts(), KStandardShortcut::quit());
         for (auto *toolbar : window.findChildren<QToolBar *>())
             QVERIFY(!toolbar->actions().contains(quit));
         QVERIFY(menu->actions().contains(window.findChild<QAction *>(QStringLiteral("openWith"))));
@@ -805,6 +844,320 @@ class WindowTests final : public QObject
         window.HidePreview();
     }
 
+    void nativeWaylandLifecycle()
+    {
+        if (!qEnvironmentVariableIsSet("KGLANCEQT_NATIVE_DISPLAY_TEST"))
+            QSKIP("Run tests/wayland_smoke.py for native compositor validation");
+        QCOMPARE(QGuiApplication::platformName(), QStringLiteral("wayland"));
+        const auto screens = QGuiApplication::screens();
+        QVERIFY(!screens.isEmpty());
+        for (auto *screen : screens)
+            qInfo() << "OUTPUT" << screen->name() << screen->geometry()
+                    << screen->devicePixelRatio();
+        QGuiApplication::setDesktopFileName(QStringLiteral("org.kglanceqt.KGlanceQT"));
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("native.png"));
+        QImage pixels(800, 600, QImage::Format_RGB32);
+        pixels.fill(QColor("#299bdc"));
+        QVERIFY(pixels.save(path));
+        PreviewWindow window(false);
+        const QStringList paths{path, directory.filePath(QStringLiteral("missing.txt"))};
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto bus = QDBusConnection::sessionBus();
+        const auto owner = bus.interface()->servicePid(QStringLiteral("org.kde.KWin"));
+        QVERIFY(owner.isValid());
+        QCOMPARE(owner.value(), qEnvironmentVariableIntValue("KGLANCEQT_KWIN_PID"));
+        auto activate = [&](const QString &output)
+        {
+            const auto scriptPath = directory.filePath(QStringLiteral("activate.js"));
+            const QString script =
+                QStringLiteral("for (const w of workspace.stackingOrder) { if(w.pid === %1) { "
+                               "workspace.activeWindow=w; "
+                               "const output=workspace.screens.find(s=>s.name===%2); if(output) "
+                               "workspace.sendClientToScreen(w,output); } }")
+                    .arg(QCoreApplication::applicationPid())
+                    .arg(QString::fromUtf8(
+                             QJsonDocument(QJsonArray{output}).toJson(QJsonDocument::Compact))
+                             .mid(1)
+                             .chopped(1));
+            if (!writePreviewFile(scriptPath, script.toUtf8()))
+                return false;
+            QDBusInterface scripting(QStringLiteral("org.kde.KWin"), QStringLiteral("/Scripting"),
+                                     QStringLiteral("org.kde.kwin.Scripting"), bus);
+            const QDBusReply<int> loaded = scripting.call(
+                QStringLiteral("loadScript"), scriptPath,
+                QStringLiteral("kglanceqt-validation-%1").arg(QCoreApplication::applicationPid()));
+            if (!loaded.isValid() || loaded.value() < 0)
+                return false;
+            QDBusInterface instance(QStringLiteral("org.kde.KWin"),
+                                    QStringLiteral("/Scripting/Script%1").arg(loaded.value()),
+                                    QStringLiteral("org.kde.kwin.Script"), bus);
+            const auto reply = instance.call(QStringLiteral("run"));
+            scripting.call(
+                QStringLiteral("unloadScript"),
+                QStringLiteral("kglanceqt-validation-%1").arg(QCoreApplication::applicationPid()));
+            return reply.type() != QDBusMessage::ErrorMessage;
+        };
+        QVERIFY(activate(screens.first()->name()));
+        QTRY_VERIFY(window.isActiveWindow());
+        for (auto *screen : screens)
+        {
+            QVERIFY(activate(screen->name()));
+            QTRY_COMPARE(window.windowHandle()->screen()->name(), screen->name());
+            QTRY_VERIFY(window.windowHandle()->isExposed());
+            QVERIFY(window.windowHandle()->devicePixelRatio() >= 1.0);
+            QVERIFY(!window.windowIcon().pixmap(64).isNull());
+            qInfo() << "PREVIEW" << screen->name() << window.size() << window.devicePixelRatioF();
+        }
+#if KWINDOWSYSTEM_VERSION >= QT_VERSION_CHECK(6, 19, 0)
+        QFutureWatcher<QString> token;
+        token.setFuture(KWaylandExtras::xdgActivationToken(
+            window.windowHandle(), QStringLiteral("org.kglanceqt.KGlanceQT")));
+        QTRY_VERIFY(token.isFinished());
+        QVERIFY(!token.result().isEmpty());
+        window.HidePreview();
+        QVERIFY(!window.IsVisible());
+        window.ShowPreview(paths, token.result());
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QTRY_VERIFY(window.isActiveWindow());
+        qInfo() << "Native xdg-activation token restored focus";
+#endif
+        window.findChild<QAction *>(QStringLiteral("nextFile"))->trigger();
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("missing.txt")));
+#if KCOLORSCHEME_VERSION >= QT_VERSION_CHECK(6, 27, 0)
+        auto *schemes = KColorSchemeManager::instance();
+        schemes->setAutosaveChanges(false);
+        const auto originalScheme = schemes->activeSchemeId();
+        const auto originalPalette = qApp->palette();
+        for (const auto &scheme : {QStringLiteral("BreezeLight"), QStringLiteral("BreezeDark")})
+        {
+            schemes->activateSchemeId(scheme);
+            auto *surface = window.findChild<QWidget *>(QStringLiteral("previewSurface"));
+            QVERIFY(surface);
+            QTRY_COMPARE(surface->palette().color(QPalette::Window),
+                         qApp->palette().color(QPalette::Window));
+            QVERIFY(!window.grab().isNull());
+            qInfo() << "Native theme" << scheme << surface->palette().color(QPalette::Window);
+            if (!qEnvironmentVariable("KGLANCEQT_TEST_SCREENSHOTS").isEmpty())
+            {
+                QDir output(qEnvironmentVariable("KGLANCEQT_TEST_SCREENSHOTS"));
+                output.mkpath(QStringLiteral("."));
+                QVERIFY(window.grab().save(
+                    output.filePath(QStringLiteral("native-%1.png").arg(scheme))));
+            }
+        }
+        schemes->activateSchemeId(originalScheme);
+        qApp->setPalette(originalPalette);
+#endif
+        window.findChild<QAction *>(QStringLiteral("previousFile"))->trigger();
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        window.ShowPreview(paths, {});
+        QVERIFY(!window.IsVisible());
+    }
+
+    void nativeShortcutConfigurationAndRefresh()
+    {
+        auto config = KSharedConfig::openConfig(QStringLiteral("kglanceqtshortcutsrc"),
+                                                KConfig::SimpleConfig);
+        KConfigGroup group(config, QStringLiteral("Shortcuts"));
+        group.writeEntry("refreshPreview", QStringLiteral("F6"));
+        config->sync();
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("refresh.txt"));
+        QVERIFY(writePreviewFile(path, "content\n"));
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QVERIFY(!window.windowIcon().isNull());
+        auto *collection = window.findChild<KActionCollection *>(QStringLiteral("shortcutActions"));
+        QVERIFY(collection);
+        auto *refresh = collection->action(QStringLiteral("refreshPreview"));
+        QCOMPARE(refresh->shortcut(), QKeySequence(Qt::Key_F6));
+        QCOMPARE(collection->action(QStringLiteral("togglePreview"))->shortcut(),
+                 QKeySequence(Qt::Key_Space));
+        QVERIFY(!KActionCollection::isShortcutsConfigurable(
+            collection->action(QStringLiteral("togglePreview"))));
+        QPointer<KTextEditor::View> old = window.findChild<KTextEditor::View *>();
+        QTest::keyClick(old, Qt::Key_F6);
+        QTRY_VERIFY(old.isNull());
+        bool opened = false;
+        QTimer::singleShot(0, &window,
+                           [&]
+                           {
+                               auto *dialog = window.findChild<KShortcutsDialog *>(
+                                   QStringLiteral("applicationShortcutsDialog"));
+                               opened = dialog && !dialog->actionCollections().isEmpty();
+                               if (dialog)
+                                   dialog->reject();
+                           });
+        collection->action(QStringLiteral("configureShortcuts"))->trigger();
+        QVERIFY(opened);
+        QCOMPARE(refresh->shortcut(), QKeySequence(Qt::Key_F6));
+        window.HidePreview();
+    }
+
+    void tableReadingPositionMemory()
+    {
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("positions.csv"));
+        QByteArray data;
+        for (int row = 0; row < 500; ++row)
+        {
+            for (int col = 0; col < 16; ++col)
+            {
+                if (col)
+                    data += ',';
+                data += QByteArray("row ") + QByteArray::number(row) + " column " +
+                        QByteArray::number(col);
+            }
+            data += '\n';
+        }
+        QVERIFY(writePreviewFile(path, data));
+        PreviewWindow window(false);
+        window.ShowPreview({path, directory.filePath(QStringLiteral("missing.txt"))}, {});
+        QTRY_VERIFY(window.findChild<TableView *>());
+        auto *table = window.findChild<TableView *>();
+        auto *cells = table->findChild<QTableView *>();
+        QTRY_VERIFY(table->position().has_value());
+        auto *search = table->findChild<QLineEdit *>();
+        search->setText(QStringLiteral("row"));
+        cells->sortByColumn(2, Qt::DescendingOrder);
+        cells->setCurrentIndex(cells->model()->index(100, 3));
+        QTRY_VERIFY(cells->verticalScrollBar()->maximum() > 120);
+        cells->verticalScrollBar()->setValue(120);
+        cells->horizontalScrollBar()->setValue(150);
+        const auto saved = *table->position();
+        window.findChild<QAction *>(QStringLiteral("nextFile"))->trigger();
+        QTRY_VERIFY(!window.findChild<TableView *>());
+        window.findChild<QAction *>(QStringLiteral("previousFile"))->trigger();
+        QTRY_VERIFY(window.findChild<TableView *>());
+        table = window.findChild<TableView *>();
+        cells = table->findChild<QTableView *>();
+        QTRY_VERIFY(table->position().has_value());
+        QTRY_COMPARE(table->position()->query, saved.query);
+        QTRY_COMPARE(cells->verticalScrollBar()->value(), saved.vertical);
+        QCOMPARE(cells->horizontalScrollBar()->value(), saved.horizontal);
+        QCOMPARE(table->position()->sortColumn, saved.sortColumn);
+        QCOMPARE(table->position()->sortOrder, saved.sortOrder);
+        QCOMPARE(cells->currentIndex().row(), saved.currentRow);
+        window.findChild<QAction *>(QStringLiteral("clearPositions"))->trigger();
+        QTRY_VERIFY(window.findChild<TableView *>());
+        table = window.findChild<TableView *>();
+        QTRY_VERIFY(table->position().has_value());
+        QTRY_COMPARE(table->position()->query, QString{});
+        window.HidePreview();
+    }
+
+    void accessibleTableInputAndThemeChanges()
+    {
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("accessible.csv"));
+        QVERIFY(writePreviewFile(path, "two words,10\nother row,20\n"));
+        PreviewWindow window(false);
+        window.ShowPreview({path, directory.filePath(QStringLiteral("missing.txt"))}, {});
+        QTRY_VERIFY(window.findChild<TableView *>());
+        auto *table = window.findChild<TableView *>();
+        QTRY_VERIFY(table->position().has_value());
+        auto *search = table->findChild<QLineEdit *>();
+        search->setFocus();
+        QTRY_VERIFY(search->hasFocus());
+        QTest::keyClicks(search, "two words");
+        QCOMPARE(search->text(), QStringLiteral("two words"));
+        QVERIFY(window.IsVisible());
+        auto *cells = table->findChild<QTableView *>();
+        QTRY_COMPARE(cells->model()->rowCount(), 1);
+        cells->setCurrentIndex(cells->model()->index(0, 0));
+        cells->setFocus();
+        QTest::keyClick(cells, Qt::Key_Right);
+        QCOMPARE(cells->currentIndex().column(), 1);
+        QVERIFY(window.findChild<TableView *>() == table);
+        auto *interface = QAccessible::queryAccessibleInterface(search);
+        QVERIFY(interface);
+        QCOMPARE(interface->role(), QAccessible::EditableText);
+        QCOMPARE(interface->text(QAccessible::Name), QStringLiteral("Search table cells"));
+        QVERIFY(!QAccessible::queryAccessibleInterface(cells)->text(QAccessible::Name).isEmpty());
+        const auto original = qApp->palette();
+#if KCOLORSCHEME_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        auto *schemes = KColorSchemeManager::instance();
+#else
+        KColorSchemeManager localSchemes;
+        auto *schemes = &localSchemes;
+#endif
+        schemes->setAutosaveChanges(false);
+        const auto restorePalette = qScopeGuard(
+            [original, schemes]
+            {
+                schemes->activateScheme(QModelIndex{});
+                qApp->setPalette(original);
+            });
+        QList<QPalette> palettes;
+        for (const auto &name : {QStringLiteral("BreezeLight"), QStringLiteral("BreezeDark")})
+        {
+            const auto path =
+                QStandardPaths::locate(QStandardPaths::GenericDataLocation,
+                                       QStringLiteral("color-schemes/%1.colors").arg(name));
+            if (!path.isEmpty())
+                palettes.append(KColorScheme::createApplicationPalette(
+                    KSharedConfig::openConfig(path, KConfig::SimpleConfig)));
+            else
+            {
+                auto palette = original;
+                if (name == QLatin1String("BreezeDark"))
+                {
+                    for (auto role : {QPalette::Window, QPalette::Base, QPalette::Button})
+                        palette.setColor(role, QColor("#232629"));
+                    for (auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+                        palette.setColor(role, QColor("#eff0f1"));
+                }
+                palettes.append(palette);
+            }
+        }
+        auto custom = palettes.last();
+        for (auto role : {QPalette::Window, QPalette::Base, QPalette::Button})
+            custom.setColor(role, QColor("#000040"));
+        for (auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+            custom.setColor(role, QColor("#ffff80"));
+        palettes.append(custom);
+        PreviewSurface surface(QMimeDatabase().mimeTypeForName(QStringLiteral("text/plain")));
+        surface.resize(420, 240);
+        auto *layout = new QVBoxLayout(&surface);
+        auto *label = new QLabel(QStringLiteral("Readable preview message"), &surface);
+        layout->addWidget(label);
+        surface.show();
+        for (int i = 0; i < palettes.size(); ++i)
+        {
+            if (i < 2)
+            {
+#if KCOLORSCHEME_VERSION >= QT_VERSION_CHECK(6, 27, 0)
+                schemes->activateSchemeId(i == 0 ? QStringLiteral("BreezeLight")
+                                                 : QStringLiteral("BreezeDark"));
+#else
+                schemes->activateScheme(schemes->indexForScheme(
+                    i == 0 ? QStringLiteral("Breeze Light") : QStringLiteral("Breeze Dark")));
+#endif
+            }
+            const auto palette = palettes.at(i);
+            qApp->setPalette(palette);
+            QTRY_COMPARE(surface.palette().color(QPalette::Window),
+                         palette.color(QPalette::Window));
+            QCOMPARE(label->palette().color(QPalette::WindowText),
+                     palette.color(QPalette::WindowText));
+            if (!qEnvironmentVariable("KGLANCEQT_TEST_SCREENSHOTS").isEmpty())
+            {
+                QDir output(qEnvironmentVariable("KGLANCEQT_TEST_SCREENSHOTS"));
+                output.mkpath(QStringLiteral("."));
+                QVERIFY(
+                    surface.grab().save(output.filePath(QStringLiteral("surface-%1.png").arg(i))));
+                QVERIFY(window.grab().save(output.filePath(QStringLiteral("table-%1.png").arg(i))));
+            }
+        }
+        qApp->setPalette(original);
+        surface.close();
+        window.HidePreview();
+    }
+
     void boundedTablesAndCellInteraction()
     {
         QTemporaryDir directory;
@@ -897,6 +1250,8 @@ class WindowTests final : public QObject
         trash->trigger();
         QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("Selection empty")));
         QVERIFY(!trash->isEnabled());
+        QVERIFY(!window.findChild<QAction *>(QStringLiteral("copyLocation"))->isEnabled());
+        QVERIFY(!window.findChild<QAction *>(QStringLiteral("openWith"))->isEnabled());
         QTRY_VERIFY(undo->isEnabled());
         undo->trigger();
         QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("b.txt")));
@@ -1614,6 +1969,181 @@ class WindowTests final : public QObject
         window.HidePreview();
     }
 
+    void previewPerformance()
+    {
+        if (!qEnvironmentVariableIsSet("KGLANCEQT_BENCHMARK_REPORT"))
+            QSKIP("Run tests/benchmark.py for explicit performance measurement.");
+        QTemporaryDir directory;
+        const auto text = directory.filePath(QStringLiteral("sample.cpp"));
+        const auto image = directory.filePath(QStringLiteral("sample.png"));
+        QVERIFY(writePreviewFile(text, QByteArray("// benchmark sample\n").repeated(1000)));
+        QImage pixels(1920, 1080, QImage::Format_RGB32);
+        pixels.fill(Qt::blue);
+        QVERIFY(pixels.save(image));
+        QElapsedTimer timer;
+        timer.start();
+        PreviewWindow window(false);
+        const double construction = timer.nsecsElapsed() / 1e6;
+        timer.restart();
+        window.ShowPreview({text, image}, {});
+        const double show = timer.nsecsElapsed() / 1e6;
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<KTextEditor::View *>(), 10000);
+        const double useful = timer.nsecsElapsed() / 1e6;
+        const qint64 processFirst =
+            QDateTime::currentMSecsSinceEpoch() -
+            qEnvironmentVariable("KGLANCEQT_BENCHMARK_START_MS").toLongLong();
+        timer.restart();
+        window.findChild<QAction *>(QStringLiteral("nextFile"))->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<ImageView *>(), 10000);
+        const double transition = timer.nsecsElapsed() / 1e6;
+        window.HidePreview();
+        timer.restart();
+        window.ShowPreview({text}, {});
+        const double resident = timer.nsecsElapsed() / 1e6;
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<KTextEditor::View *>(), 10000);
+        const double residentContent = timer.nsecsElapsed() / 1e6;
+        QTest::qWait(500);
+        QFile stat(QStringLiteral("/proc/self/stat"));
+        QVERIFY(stat.open(QIODevice::ReadOnly));
+        const auto first = stat.readAll();
+        QTest::qWait(1000);
+        stat.seek(0);
+        const auto last = stat.readAll();
+        const auto ticks = [](const QByteArray &bytes)
+        {
+            const auto fields = bytes.mid(bytes.lastIndexOf(')') + 2).split(' ');
+            return fields.value(11).toLongLong() + fields.value(12).toLongLong();
+        };
+        QFile memory(QStringLiteral("/proc/self/status"));
+        QVERIFY(memory.open(QIODevice::ReadOnly));
+        QJsonObject report{{"platform", QGuiApplication::platformName()},
+                           {"window_construction_ms", construction},
+                           {"show_dispatch_ms", show},
+                           {"first_text_ms", useful},
+                           {"fresh_process_first_text_ms", processFirst},
+                           {"text_to_image_ms", transition},
+                           {"resident_show_dispatch_ms", resident},
+                           {"resident_text_ms", residentContent},
+                           {"idle_cpu_ticks_1s", ticks(last) - ticks(first)},
+                           {"memory_status", QString::fromUtf8(memory.readAll())}};
+        QFile output(qEnvironmentVariable("KGLANCEQT_BENCHMARK_REPORT"));
+        QVERIFY(output.open(QIODevice::WriteOnly));
+        output.write(QJsonDocument(report).toJson());
+        window.HidePreview();
+    }
+
+    void positionMemoryCanBeDisabled()
+    {
+        PreviewPreferences p;
+        p.rememberPositions = false;
+        p.sqliteEnabled = false;
+        p.sqliteRows = 25;
+        QVERIFY(savePreferences(p));
+        QCOMPARE(readPreferences().rememberPositions, false);
+        QCOMPARE(readPreferences().sqliteEnabled, false);
+        QCOMPARE(readPreferences().sqliteRows, 25);
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("data.csv"));
+        const auto other = directory.filePath(QStringLiteral("other.csv"));
+        QVERIFY(writePreviewFile(path, "one,two\nthree,four\n"));
+        QVERIFY(writePreviewFile(other, "five,six\n"));
+        PreviewWindow window(false);
+        window.ShowPreview({path, other}, {});
+        QTRY_VERIFY(window.findChild<TableView *>());
+        auto *search = window.findChild<QLineEdit *>(QStringLiteral("tableSearch"));
+        search->setText(QStringLiteral("three"));
+        window.findChild<QAction *>(QStringLiteral("nextFile"))->trigger();
+        window.findChild<QAction *>(QStringLiteral("previousFile"))->trigger();
+        QTRY_VERIFY(window.findChild<TableView *>());
+        QCOMPARE(window.findChild<QLineEdit *>(QStringLiteral("tableSearch"))->text(), QString{});
+        window.HidePreview();
+    }
+#ifdef KGLANCEQT_WITH_SQLITE
+    void sqliteNavigationAndHide()
+    {
+        QTemporaryDir dir;
+        const auto path = dir.filePath(QStringLiteral("sample.sqlite"));
+        sqlite3 *db = nullptr;
+        QCOMPARE(sqlite3_open(QFile::encodeName(path).constData(), &db), SQLITE_OK);
+        QCOMPARE(sqlite3_exec(db,
+                              "CREATE TABLE one(id, name); INSERT INTO one VALUES(1,'sample'); "
+                              "CREATE TABLE two(value); INSERT INTO two VALUES(2);",
+                              nullptr, nullptr, nullptr),
+                 SQLITE_OK);
+        sqlite3_close(db);
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<SQLiteView *>());
+        auto *choice = window.findChild<SQLiteView *>()->findChild<QComboBox *>();
+        QTRY_COMPARE(choice->count(), 2);
+        QTRY_VERIFY(window.findChild<QTableView *>(QStringLiteral("tableCells")));
+        QTRY_VERIFY(window.findChild<QTableView *>(QStringLiteral("tableCells"))->model());
+        QCOMPARE(window.findChild<QTableView *>(QStringLiteral("tableCells"))
+                     ->model()
+                     ->headerData(1, Qt::Horizontal)
+                     .toString(),
+                 QStringLiteral("name"));
+        choice->setCurrentIndex(1);
+        QTRY_VERIFY(window.findChild<QTableView *>(QStringLiteral("tableCells"))->model());
+        QCOMPARE(window.findChild<QTableView *>(QStringLiteral("tableCells"))
+                     ->model()
+                     ->index(0, 0)
+                     .data()
+                     .toString(),
+                 QStringLiteral("2"));
+        if (qEnvironmentVariableIsSet("KGLANCEQT_TEST_SCREENSHOTS"))
+        {
+            QDir().mkpath(qEnvironmentVariable("KGLANCEQT_TEST_SCREENSHOTS"));
+            window.grab().save(qEnvironmentVariable("KGLANCEQT_TEST_SCREENSHOTS") +
+                               QStringLiteral("/sqlite.png"));
+        }
+        window.HidePreview();
+        QVERIFY(!window.findChild<SQLiteView *>());
+        window.ShowPreview({path}, {});
+        window.HidePreview();
+        QTest::qWait(50);
+        QVERIFY(!window.findChild<SQLiteView *>());
+    }
+#endif
+
+    void desktopContextMenuDiscovery()
+    {
+        QTemporaryDir directory;
+        const auto first = directory.filePath(QStringLiteral("first file.cpp"));
+        const auto second = directory.filePath(QStringLiteral("second #file.csv"));
+        QVERIFY(writePreviewFile(first, "int first;\n"));
+        QVERIFY(writePreviewFile(second, "one,two\n"));
+        for (const KFileItemList &items :
+             {KFileItemList{KFileItem(QUrl::fromLocalFile(first))},
+              KFileItemList{KFileItem(QUrl::fromLocalFile(first)),
+                            KFileItem(QUrl::fromLocalFile(second))},
+              KFileItemList{KFileItem(QUrl(QStringLiteral("desktop:/first%20file.cpp")),
+                                      QStringLiteral("text/x-c++src"), S_IFREG),
+                            KFileItem(QUrl(QStringLiteral("desktop:/second%20%23file.csv")),
+                                      QStringLiteral("text/csv"), S_IFREG)}})
+        {
+            KFileItemActions actions;
+            actions.setItemListProperties(KFileItemListProperties(items));
+            QMenu menu;
+            actions.addActionsTo(&menu, KFileItemActions::MenuActionSource::Services);
+            bool found = false;
+            auto candidates = menu.actions();
+            for (int i = 0; i < candidates.size(); ++i)
+                if (candidates[i]->menu())
+                    candidates.append(candidates[i]->menu()->actions());
+            for (auto *action : candidates)
+                if (action->text().contains(QStringLiteral("Preview with KGlanceQT")))
+                {
+                    QVERIFY(action->isEnabled());
+                    QVERIFY(!action->icon().isNull());
+                    found = true;
+                }
+            QVERIFY2(
+                found,
+                "KIO must expose the preview action for single, mixed and desktop selections.");
+        }
+    }
+
     void desktopUrl()
     {
         if (!KProtocolInfo::isKnownProtocol(QStringLiteral("desktop")))
@@ -1630,6 +2160,18 @@ class WindowTests final : public QObject
         window.ShowPreview({QStringLiteral("desktop:/desktop%20preview.cpp")}, {});
         QTRY_VERIFY_WITH_TIMEOUT(window.findChild<KTextEditor::View *>() != nullptr, 10000);
         QVERIFY(window.windowTitle().contains(QStringLiteral("desktop preview.cpp")));
+        const auto second = desktop + QStringLiteral("/second #preview.csv");
+        QVERIFY(writePreviewFile(second, "one,two\n"));
+        window.HidePreview();
+        window.ShowPreview({QStringLiteral("desktop:/desktop%20preview.cpp"),
+                            QStringLiteral("desktop:/second%20%23preview.csv")},
+                           {});
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<KTextEditor::View *>(), 10000);
+        window.findChild<QAction *>(QStringLiteral("nextFile"))->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<TableView *>(), 10000);
+        QVERIFY(window.windowTitle().contains(QStringLiteral("second #preview.csv")));
+        window.findChild<QAction *>(QStringLiteral("previousFile"))->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<KTextEditor::View *>(), 10000);
         window.HidePreview();
     }
 

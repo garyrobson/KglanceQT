@@ -28,6 +28,7 @@ class KMessageWidget;
 class ImageComparison;
 class FileTriage;
 class QMenu;
+class AppShortcuts;
 class RemotePreview;
 namespace KParts
 {
@@ -83,6 +84,7 @@ class PreviewWindow final : public QMainWindow
     QAction *compareImages_;
     QPointer<ImageComparison> comparison_;
     QPointer<RemotePreview> remote_;
+    AppShortcuts *shortcuts_;
     FileTriage *triage_;
     KMessageWidget *operationNotice_;
     QAction *trashAction_;

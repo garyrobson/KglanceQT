@@ -4,6 +4,7 @@
 #include "previewservice.h"
 #include "previewwindow.h"
 
+#include <KIconTheme>
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDBusConnection>
@@ -18,6 +19,7 @@
 
 int main(int argc, char **argv)
 {
+    KIconTheme::initTheme();
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("KGlanceQT"));
     app.setOrganizationName(QStringLiteral("kglanceqt"));

@@ -19,3 +19,7 @@ the same license unless explicitly marked otherwise.
 Qt, KDE Frameworks, Okular, KTextEditor, and installed format plugins are separately
 maintained dependencies with their own authors and licenses. They are consumed
 through distribution-provided shared libraries and plugins, not vendored here.
+
+The document-and-eye application icon and its small-size variant are original
+artwork created for KGlanceQT, distributed under AGPL-3.0-only. PNG sizes are
+rendered from the SVG sources with the distribution's librsvg tools.

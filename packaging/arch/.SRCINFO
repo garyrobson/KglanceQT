@@ -16,6 +16,7 @@ pkgbase = kglanceqt
 	depends = gcc-libs
 	depends = qt6-base>=6.6
 	depends = qt6-multimedia
+	depends = sqlite>=3.41
 	depends = kparts
 	depends = ktexteditor
 	depends = kio
@@ -24,6 +25,10 @@ pkgbase = kglanceqt
 	depends = baloo-widgets
 	depends = kwidgetsaddons
 	depends = kfilemetadata>=6.2
+	depends = kxmlgui
+	depends = kconfigwidgets
+	depends = kiconthemes>=6.3
+	depends = kcolorscheme
 	optdepends = okular: PDF and supported document previews
 	optdepends = qt6-svg: SVG previews
 	optdepends = qt6-imageformats: additional image formats

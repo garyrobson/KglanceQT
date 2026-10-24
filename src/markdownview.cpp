@@ -183,6 +183,7 @@ MarkdownView::MarkdownView(const QString &path, QWidget *parent) : QWidget(paren
     auto *query = new QLineEdit(search);
     query->setObjectName(QStringLiteral("markdownSearch"));
     query->setPlaceholderText(tr("Find in preview…"));
+    query->setAccessibleName(tr("Find in Markdown preview"));
     query->setClearButtonEnabled(true);
     search->addWidget(query);
     auto *previous =
@@ -196,6 +197,8 @@ MarkdownView::MarkdownView(const QString &path, QWidget *parent) : QWidget(paren
     layout->addWidget(pages, 1);
     auto *browser = new MarkdownBrowser(path, stop_.get_token(), notice, pages);
     pages->addWidget(browser);
+    browser->setAccessibleName(tr("Rendered Markdown preview"));
+    setFocusProxy(browser);
     auto *sourcePage = new QWidget(pages);
     auto *sourceLayout = new QVBoxLayout(sourcePage);
     sourceLayout->setContentsMargins(0, 0, 0, 0);

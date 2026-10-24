@@ -7,5 +7,5 @@ X-KDE-Priority=TopLevel
 
 [Desktop Action previewWithKGlanceQT]
 Name=Preview with KGlanceQT
-Icon=preview
+Icon=org.kglanceqt.KGlanceQT
 Exec="@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/kglanceqt" -- %U

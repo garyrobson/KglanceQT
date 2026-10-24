@@ -28,6 +28,9 @@ PreviewPreferences readPreferences()
     p.markdownSource = settings.value(QStringLiteral("markdown/source"), false).toBool();
     p.information = settings.value(QStringLiteral("window/information"), false).toBool();
     p.filmstrip = settings.value(QStringLiteral("window/filmstrip"), false).toBool();
+    p.rememberPositions = settings.value(QStringLiteral("positions/remember"), true).toBool();
+    p.sqliteEnabled = settings.value(QStringLiteral("sqlite/enabled"), true).toBool();
+    p.sqliteRows = qBound(1, settings.value(QStringLiteral("sqlite/rows"), 1000).toInt(), 10000);
     p.textMiB = qBound(1, settings.value(QStringLiteral("limits/textMiB"), 16).toInt(), 16);
     p.remoteMiB = qBound(1, settings.value(QStringLiteral("limits/remoteMiB"), 128).toInt(), 128);
     p.imageMP = qBound(1, settings.value(QStringLiteral("limits/imageMP"), 64).toInt(), 64);
@@ -58,6 +61,9 @@ bool savePreferences(const PreviewPreferences &p)
                       qBound(1, p.animationFrames, MaxAnimationFrames));
     settings.setValue(QStringLiteral("limits/animationMiB"), qBound(1, p.animationMiB, 64));
     settings.setValue(QStringLiteral("limits/archiveEntries"), qBound(1, p.archiveEntries, 10000));
+    settings.setValue(QStringLiteral("positions/remember"), p.rememberPositions);
+    settings.setValue(QStringLiteral("sqlite/enabled"), p.sqliteEnabled);
+    settings.setValue(QStringLiteral("sqlite/rows"), qBound(1, p.sqliteRows, 10000));
     settings.sync();
     return settings.status() == QSettings::NoError;
 }
@@ -104,6 +110,17 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
     auto *filmstrip = new QCheckBox(tr("Show the selection filmstrip"), general);
     filmstrip->setObjectName(QStringLiteral("defaultFilmstrip"));
     form->addRow(filmstrip);
+    auto *positions =
+        new QCheckBox(tr("Remember viewing positions within this selection"), general);
+    positions->setObjectName(QStringLiteral("rememberPositions"));
+    form->addRow(positions);
+    auto *sqlite = new QCheckBox(tr("Preview SQLite databases"), general);
+    sqlite->setObjectName(QStringLiteral("sqliteEnabled"));
+#ifndef KGLANCEQT_WITH_SQLITE
+    sqlite->setEnabled(false);
+    sqlite->setToolTip(tr("This build does not include SQLite previews."));
+#endif
+    form->addRow(sqlite);
     auto *note = new QLabel(tr("Preview defaults apply to the next file opened. Volume and the "
                                "information panel and selection filmstrip update immediately."),
                             general);
@@ -124,6 +141,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
     };
     auto *text =
         spin(QStringLiteral("textLimit"), tr("Text, Markdown and tables:"), 16, tr(" MiB"));
+    auto *sqliteRows = spin(QStringLiteral("sqliteRows"), tr("SQLite rows per table:"), 10000, {});
     auto *remote = spin(QStringLiteral("remoteLimit"), tr("Remote downloads:"), 128, tr(" MiB"));
     auto *image = spin(QStringLiteral("imageLimit"), tr("Decoded images:"), 64, tr(" MP"));
     auto *animationFrames = spin(QStringLiteral("animationFrameLimit"), tr("Animation frames:"),
@@ -199,6 +217,9 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
         markdown->setCurrentIndex(p.markdownSource ? 1 : 0);
         information->setChecked(p.information);
         filmstrip->setChecked(p.filmstrip);
+        positions->setChecked(p.rememberPositions);
+        sqlite->setChecked(p.sqliteEnabled);
+        sqliteRows->setValue(p.sqliteRows);
         text->setValue(p.textMiB);
         remote->setValue(p.remoteMiB);
         image->setValue(p.imageMP);
@@ -217,6 +238,9 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
         p.markdownSource = markdown->currentIndex() == 1;
         p.information = information->isChecked();
         p.filmstrip = filmstrip->isChecked();
+        p.rememberPositions = positions->isChecked();
+        p.sqliteEnabled = sqlite->isChecked();
+        p.sqliteRows = sqliteRows->value();
         p.textMiB = text->value();
         p.remoteMiB = remote->value();
         p.imageMP = image->value();

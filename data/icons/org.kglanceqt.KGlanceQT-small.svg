@@ -1,0 +1,9 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+ <title>KGlanceQT file preview</title>
+ <path fill="#299bdc" d="M3 1h7l3 3v11H3z"/>
+ <path fill="#b7e9fc" d="M10 1v3h3z"/>
+ <path fill="#fff" d="M4 9c1-2 2.5-3 4-3s3 1 4 3c-1 2-2.5 3-4 3s-3-1-4-3z"/>
+ <circle cx="8" cy="9" r="2" fill="#17537c"/>
+ <circle cx="8" cy="9" r="1" fill="#58e0be"/>
+</svg>

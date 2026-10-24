@@ -103,6 +103,14 @@ KDE thumbnailers, with filenames and fallback icons when unavailable. Requests a
 debounced and limited to 17 nearby local files, with up to 32 thumbnails held in
 memory; hiding the preview cancels requests and clears the cache. Virtual and
 remote locations retain fallback icons.
+Use **Application menu → Configure Keyboard Shortcuts…** to change window actions
+with KDE's native shortcut editor. Application bindings are stored separately in
+`$XDG_CONFIG_HOME/kglanceqtshortcutsrc`; Dolphin's activator remains on its separate
+preferences page. Space remains a window-only preview toggle. When an input,
+button or item view has focus, Space and arrow keys retain their normal control
+behaviour; use Alt+Left/Alt+Right (or their configured replacements) to navigate
+files from those controls. The filmstrip also supports Enter to activate an item.
+
 Use **Application menu → Help → Supported Preview Types…** to see the preview
 categories, detected image formats, optional viewer availability, and limitations.
 
@@ -177,7 +185,16 @@ are data. Parsing handles
 quoted delimiters, doubled quotes and multiline fields in a worker. Limits are
 16 MiB input (or the lower text limit), 10,000 rows, 256 columns, 100,000 cells and
 64 Ki characters per field. A visible notice identifies partial results; incomplete final rows are
-omitted at the input limit. Column widths sample at most 100 rows.
+omitted at the input limit. Column widths sample at most 100 rows. Query, sort,
+current cell and scroll positions are remembered for the selection, including
+automatic refresh. Hide, a new selection or Clear Remembered Positions clears them.
+
+Native Office and SQLite options have been [evaluated](docs/NATIVE_FORMATS.md).
+Rendered Office previews are available only when a compatible native document
+viewer is installed; this machine currently uses thumbnails or an external app.
+SQLite remains a separate optional-provider task with cancellation and read-only
+requirements. The Supported Preview Types dialog reports native Office support
+on the current machine.
 
 Open **Configure KGlanceQT…** from the toolbar (Ctrl+Shift+,) for audio/video/animation
 autoplay, default volume, Markdown's initial view, sidebar visibility, and text,
@@ -202,7 +219,7 @@ with object `/org/kglanceqt/Preview`. Per-user window settings live in
 
 Required: a C++20 compiler, CMake, Ninja, Qt 6.6+ Widgets, XML, DBus, Concurrent
 and Multimedia, plus KF6 Parts, TextEditor, KIO, Archive, WindowSystem,
-WidgetsAddons, BalooWidgets (`baloo-widgets`) and FileMetaData 6.2+ (`kfilemetadata`). Tests
+XmlGui, ConfigWidgets, ColorScheme, IconThemes 6.3+, WidgetsAddons, BalooWidgets (`baloo-widgets`) and FileMetaData 6.2+ (`kfilemetadata`). Tests
 also use Qt Test, Python, DBus tools and Okular. Python is not an application
 runtime dependency. Image format plugins and thumbnails are optional enhancements.
 
@@ -247,3 +264,51 @@ come from KIO. Remote previews do not monitor the server for changes; use Refres
 Open, Open With and Copy Location retain the original URL. Trash, image comparison
 and metadata editing currently require local files. Embedded Markdown remote images
 remain disabled.
+
+
+## Plasma appearance and validation
+
+The document-and-eye application icon ships as scalable SVG and PNG variants
+from 16 through 256 pixels. The 16/22/24-pixel versions use simpler artwork.
+Launcher, Dolphin action and preview windows share `org.kglanceqt.KGlanceQT`.
+The window also has an embedded PNG fallback for uninstalled development builds
+and systems without the optional Qt SVG plugin.
+
+Preview messages and audio controls follow the current system palette, including
+live changes. Table/search, image and metadata controls expose accessible names;
+Qt's native controls provide their accessibility roles and keyboard behaviour.
+See [the validation record](docs/PLASMA_VALIDATION.md) for coverage and limits.
+
+For a system with KWin Wayland, KScreen, Qt Wayland, DBus tools and Breeze installed:
+
+```sh
+just wayland-test          # isolated KWin; two outputs, including mixed scaling
+just wayland-current-test  # existing display; output settings are preserved
+```
+
+The current-display check briefly opens and activates its own validation window.
+Nested output changes require verifying that the private DBus KWin owner is the
+compositor PID launched by the test. These tools never install global shortcuts,
+change the real monitor configuration or contact the running preview service.
+
+### SQLite, measurement and package automation
+
+Local `just build` and Arch packages enable the optional SQLite preview. Direct
+CMake builds can select `-DKGLANCEQT_WITH_SQLITE=ON` (default OFF), requiring the
+installed SQLite 3.41+ development library. Choose a table, then search, sort or
+copy cells. Configure previews and the row limit in preferences; session position
+memory can also be disabled there. Only standalone local databases are accepted;
+live WAL/journal files show an explanation. See [native format limits](docs/NATIVE_FORMATS.md).
+
+`just benchmark` records five isolated process runs in `build/benchmark.json`.
+For the current display use `python3 tests/benchmark.py build/window_tests
+--platform wayland`. It measures fresh-process first text, window construction,
+resident dispatch/content, a text-to-image transition, idle CPU and current/peak
+RSS. OS caches are not dropped and these are local observations, not general
+performance claims. See [measurement notes](docs/PERFORMANCE.md).
+
+`just package-snapshot` packages the current working tree with makepkg, a local
+source archive and its SHA-256 checksum, retaining artifacts under `pkg/`. It does
+not install or publish. Scheduled/manual CI checks current Arch/CachyOS images,
+SQLite ON/OFF, tests and formatting, and retains package/source/recipe artifacts.
+See [packaging](packaging/arch/README.md) and [desktop integration](docs/DESKTOP_INTEGRATION.md).

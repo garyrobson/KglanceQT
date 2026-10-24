@@ -64,6 +64,8 @@ SelectionFilmstrip::SelectionFilmstrip(QWidget *parent)
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setSelectionMode(QAbstractItemView::SingleSelection);
     setEditTriggers(QAbstractItemView::NoEditTriggers);
+    connect(this, &QListView::activated, this,
+            [this](const QModelIndex &index) { Q_EMIT fileSelected(index.row()); });
     debounce_.setSingleShot(true);
     debounce_.setInterval(100);
     connect(&debounce_, &QTimer::timeout, this, &SelectionFilmstrip::requestThumbnails);

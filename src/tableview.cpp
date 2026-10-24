@@ -10,7 +10,9 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QScrollBar>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSortFilterProxyModel>
 #include <QStringDecoder>
 #include <QTableView>
@@ -40,6 +42,14 @@ class TableModel final : public QAbstractTableModel
         if (!index.isValid() || role != Qt::DisplayRole)
             return {};
         return result_.rows.value(index.row()).value(index.column());
+    }
+
+    QVariant headerData(int section, Qt::Orientation orientation, int role) const override
+    {
+        if (orientation == Qt::Horizontal && role == Qt::DisplayRole &&
+            section < result_.headers.size())
+            return result_.headers[section];
+        return QAbstractTableModel::headerData(section, orientation, role);
     }
 
   private:
@@ -235,15 +245,28 @@ TableResult readTable(const QString &path, QChar delimiter, std::stop_token stop
     result.notice = limits.join(QStringLiteral(" · "));
     return result;
 }
-TableView::TableView(const QString &path, QChar delimiter, QWidget *parent) : QWidget(parent)
+TableView::TableView(const QString &path, QChar delimiter, QWidget *parent)
+    : TableView([path, delimiter,
+                 maxBytes = qint64(readPreferences().textMiB) * 1024 * 1024](std::stop_token stop)
+                { return readTable(path, delimiter, stop, maxBytes, 10000, 256, 100000); },
+                parent)
+{
+}
+TableView::TableView(std::function<TableResult(std::stop_token)> loader, QWidget *parent)
+    : QWidget(parent)
 {
     auto *layout = new QVBoxLayout(this);
     auto *search = new QLineEdit(this);
+    search_ = search;
+    search->setAccessibleName(tr("Search table cells"));
     search->setObjectName(QStringLiteral("tableSearch"));
     search->setPlaceholderText(tr("Search all cells…"));
     search->setClearButtonEnabled(true);
     layout->addWidget(search);
     auto *view = new QTableView(this);
+    table_ = view;
+    setFocusProxy(view);
+    view->setAccessibleName(tr("Table preview"));
     view->setObjectName(QStringLiteral("tableCells"));
     view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     view->setSelectionBehavior(QAbstractItemView::SelectItems);
@@ -291,10 +314,13 @@ TableView::TableView(const QString &path, QChar delimiter, QWidget *parent) : QW
                 view->setColumnWidth(col, qMin(width, 400));
             }
             status->setText(
-                tr("%1 rows · %2 columns · All rows are data; click a column number to sort. %3")
+                tr("%1 rows · %2 columns · All rows are data; click a column heading to sort. %3")
                     .arg(result.rows.size())
                     .arg(result.columns)
                     .arg(result.notice));
+            ready_ = true;
+            if (pending_)
+                restorePosition(*pending_);
         });
     auto *copy = new QShortcut(QKeySequence::Copy, view);
     copy->setContext(Qt::WidgetShortcut);
@@ -341,8 +367,43 @@ TableView::TableView(const QString &path, QChar delimiter, QWidget *parent) : QW
             }
             QApplication::clipboard()->setText(output);
         });
-    watcher->setFuture(QtConcurrent::run(readTable, path, delimiter, stop_.get_token(),
-                                         qint64(readPreferences().textMiB) * 1024 * 1024, 10000,
-                                         256, 100000));
+    watcher->setFuture(QtConcurrent::run(std::move(loader), stop_.get_token()));
 }
 TableView::~TableView() { stop_.request_stop(); }
+
+std::optional<TablePosition> TableView::position() const
+{
+    if (!ready_)
+        return pending_;
+    return TablePosition{search_->text(),
+                         table_->horizontalHeader()->sortIndicatorSection(),
+                         table_->horizontalHeader()->sortIndicatorOrder(),
+                         table_->verticalScrollBar()->value(),
+                         table_->horizontalScrollBar()->value(),
+                         table_->currentIndex().row(),
+                         table_->currentIndex().column()};
+}
+void TableView::restorePosition(const TablePosition &position)
+{
+    pending_ = position;
+    if (!ready_)
+        return;
+    const auto saved = position;
+    pending_.reset();
+    const QSignalBlocker blocker(search_);
+    search_->setText(saved.query.left(512));
+    auto *proxy = qobject_cast<QSortFilterProxyModel *>(table_->model());
+    proxy->setFilterFixedString(search_->text());
+    table_->sortByColumn(qBound(-1, saved.sortColumn, table_->model()->columnCount() - 1),
+                         saved.sortOrder);
+    if (saved.currentRow >= 0 && saved.currentColumn >= 0)
+        table_->setCurrentIndex(
+            table_->model()->index(qMin(saved.currentRow, table_->model()->rowCount() - 1),
+                                   qMin(saved.currentColumn, table_->model()->columnCount() - 1)));
+    QTimer::singleShot(0, this,
+                       [this, saved]
+                       {
+                           table_->verticalScrollBar()->setValue(saved.vertical);
+                           table_->horizontalScrollBar()->setValue(saved.horizontal);
+                       });
+}
