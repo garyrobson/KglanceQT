@@ -1,0 +1,40 @@
+# Maintainer: Gary Robson
+pkgname=kglanceqt
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Native Qt 6 and KDE Frameworks 6 file previews for Dolphin and Plasma'
+arch=('x86_64')
+url='https://github.com/garyrobson/KglanceQT'
+license=('AGPL-3.0-only')
+depends=('glibc' 'gcc-libs' 'qt6-base>=6.6' 'qt6-multimedia'
+         'kparts' 'ktexteditor' 'kio' 'karchive' 'kwindowsystem')
+makedepends=('cmake' 'ninja' 'python')
+checkdepends=('dbus' 'glib2' 'qt6-tools' 'okular')
+optdepends=('okular: PDF and supported document previews'
+            'qt6-svg: SVG previews'
+            'qt6-imageformats: additional image formats'
+            'kimageformats: KDE image format plugins'
+            'kio-extras: additional thumbnail providers'
+            'kdegraphics-thumbnailers: document thumbnails'
+            'plasma-workspace: desktop:/ URLs and font viewer component')
+conflicts=('kglance' 'kglance-git')
+options=('!debug')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/qt-v$pkgver.tar.gz")
+sha256sums=('2bb1e517266158226d58318196f97738a47e2e36491df99b3408ccf6026dc234')
+
+build() {
+    cmake -S "$srcdir/KglanceQT-qt-v$pkgver" -B "$srcdir/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=None \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_TESTING=ON
+    cmake --build "$srcdir/build" --parallel 2
+}
+
+check() {
+    dbus-run-session -- ctest --test-dir "$srcdir/build" --output-on-failure --parallel 2
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install "$srcdir/build"
+}

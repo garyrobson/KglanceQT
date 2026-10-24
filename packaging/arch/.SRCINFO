@@ -1,0 +1,37 @@
+pkgbase = kglanceqt
+	pkgdesc = Native Qt 6 and KDE Frameworks 6 file previews for Dolphin and Plasma
+	pkgver = 0.2.0
+	pkgrel = 1
+	url = https://github.com/garyrobson/KglanceQT
+	arch = x86_64
+	license = AGPL-3.0-only
+	checkdepends = dbus
+	checkdepends = glib2
+	checkdepends = qt6-tools
+	checkdepends = okular
+	makedepends = cmake
+	makedepends = ninja
+	makedepends = python
+	depends = glibc
+	depends = gcc-libs
+	depends = qt6-base>=6.6
+	depends = qt6-multimedia
+	depends = kparts
+	depends = ktexteditor
+	depends = kio
+	depends = karchive
+	depends = kwindowsystem
+	optdepends = okular: PDF and supported document previews
+	optdepends = qt6-svg: SVG previews
+	optdepends = qt6-imageformats: additional image formats
+	optdepends = kimageformats: KDE image format plugins
+	optdepends = kio-extras: additional thumbnail providers
+	optdepends = kdegraphics-thumbnailers: document thumbnails
+	optdepends = plasma-workspace: desktop:/ URLs and font viewer component
+	conflicts = kglance
+	conflicts = kglance-git
+	options = !debug
+	source = kglanceqt-0.2.0.tar.gz::https://github.com/garyrobson/KglanceQT/archive/refs/tags/qt-v0.2.0.tar.gz
+	sha256sums = 2bb1e517266158226d58318196f97738a47e2e36491df99b3408ccf6026dc234
+
+pkgname = kglanceqt
