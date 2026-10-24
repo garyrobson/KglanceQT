@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
-project(KGlanceQT VERSION 0.2.0 LANGUAGES CXX)
+project(KGlanceQT VERSION 0.3.0 LANGUAGES CXX)
+set(KGLANCEQT_VERSION "${PROJECT_VERSION}-alpha.1")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +22,7 @@ add_executable(kglanceqt src/main.cpp src/dolphinsetup.cpp src/dolphinsetup.h
     src/markdownview.cpp src/markdownview.h src/informationpanel.cpp src/informationpanel.h
     src/preferences.cpp src/preferences.h src/supportedtypesdialog.cpp src/supportedtypesdialog.h)
 target_compile_options(kglanceqt PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(kglanceqt PRIVATE KGLANCEQT_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(kglanceqt PRIVATE KGLANCEQT_VERSION="${KGLANCEQT_VERSION}")
 target_link_libraries(kglanceqt PRIVATE Qt6::Widgets Qt6::Xml Qt6::DBus Qt6::Concurrent
     Qt6::MultimediaWidgets KF6::Parts KF6::TextEditor KF6::KIOWidgets
     KF6::Archive KF6::WindowSystem KF6::BalooWidgets KF6::WidgetsAddons)
