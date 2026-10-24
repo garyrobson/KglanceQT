@@ -27,7 +27,8 @@ struct ArchiveResult
     bool truncated = false;
 };
 
-ImageResult loadImage(const QString &path, std::stop_token cancellation = {});
+ImageResult loadImage(const QString &path, std::stop_token cancellation = {},
+                      int maxMegapixels = 64);
 ArchiveResult listArchive(const QString &path, const QString &mime,
-                          std::stop_token cancellation = {});
+                          std::stop_token cancellation = {}, int maxEntries = 10000);
 bool isArchive(const QString &mime);

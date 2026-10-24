@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+#include "supportedtypesdialog.h"
+
+#include <KParts/PartLoader>
+#include <QDialogButtonBox>
+#include <QImageReader>
+#include <QTextBrowser>
+#include <QVBoxLayout>
+#include <utility>
+
+namespace
+{
+bool hasViewer(const QString &mime, const QString &plugin)
+{
+    for (const auto &metadata : KParts::PartLoader::partsForMimeType(mime))
+        if (metadata.pluginId() == plugin)
+            return true;
+    return false;
+}
+} // namespace
+
+SupportedTypesDialog::SupportedTypesDialog(QWidget *parent) : QDialog(parent)
+{
+    setObjectName(QStringLiteral("supportedTypesDialog"));
+    setWindowTitle(tr("Supported Preview Types"));
+    resize(640, 540);
+    auto *layout = new QVBoxLayout(this);
+    auto *details = new QTextBrowser(this);
+    details->setObjectName(QStringLiteral("supportedTypesDetails"));
+    details->setAccessibleName(tr("Supported preview types"));
+    details->setOpenLinks(false);
+    details->setOpenExternalLinks(false);
+    QString html = QStringLiteral("<h2>%1</h2><p>%2</p>")
+                       .arg(tr("What can I preview?").toHtmlEscaped(),
+                            tr("Preview support depends on the file contents and the viewers, "
+                               "image plugins, and media codecs installed on this computer.")
+                                .toHtmlEscaped());
+    const auto section = [&html](const QString &title, const QString &text)
+    {
+        html +=
+            QStringLiteral("<h3>%1</h3><p>%2</p>").arg(title.toHtmlEscaped(), text.toHtmlEscaped());
+    };
+    section(tr("Text and source code"),
+            tr("Plain text, logs, JSON, XML, and source files such as C++, Python, and shell "
+               "scripts. Files recognized as text open with syntax highlighting where available."));
+    section(tr("Markdown"),
+            tr(".md, .markdown, and .mkd files, and files recognized as Markdown. Rendered preview "
+               "and source views, with tables and local images. Large documents open as source."));
+    QStringList formats;
+    for (const auto &format : QImageReader::supportedImageFormats())
+        formats.append(QString::fromLatin1(format).toUpper());
+    formats.removeDuplicates();
+    formats.sort();
+    section(tr("Images available on this computer"),
+            (formats.isEmpty() ? tr("No image formats were detected.")
+                               : formats.join(QStringLiteral(", ")) + QStringLiteral(".")) +
+                QStringLiteral(" ") + tr("Animated images currently show a still frame."));
+    section(tr("Audio and video"),
+            tr("Common containers include MP3, FLAC, Ogg, WAV, MP4, WebM, and MKV. Playback "
+               "depends on the installed media backend and codecs; not every file in a container "
+               "format will be playable."));
+    section(
+        tr("Archives"),
+        tr("ZIP, 7z, TAR, and gzip/bzip2/xz/zstd-compressed TAR archives. Preview lists archive "
+           "contents without extracting them."));
+    QStringList documents;
+    for (const auto &[mime, label] : {std::pair{"application/pdf", "PDF"},
+                                      {"application/postscript", "PostScript"},
+                                      {"application/epub+zip", "EPUB"}})
+        if (hasViewer(QString::fromLatin1(mime), QStringLiteral("okularpart")))
+            documents.append(QString::fromLatin1(label));
+    section(tr("Documents"),
+            documents.isEmpty()
+                ? tr("No supported Okular document viewer was detected. Install Okular to add "
+                     "PDF and other document previews.")
+                : tr("Installed Okular viewer detected for: %1. Other document types may be "
+                     "available through installed Okular plugins.")
+                      .arg(documents.join(QStringLiteral(", "))));
+    const bool fonts = hasViewer(QStringLiteral("font/ttf"), QStringLiteral("kfontviewpart")) ||
+                       hasViewer(QStringLiteral("font/otf"), QStringLiteral("kfontviewpart"));
+    section(
+        tr("Fonts"),
+        fonts ? tr("An installed font viewer provides TrueType/OpenType previews where supported.")
+              : tr("Font previews require the KDE font viewer component; none was detected "
+                   "for TrueType/OpenType files."));
+    section(tr("Folders and other files"),
+            tr("Folders show a read-only file listing. Other files may show a thumbnail from an "
+               "installed KDE thumbnailer. If no preview is available, use Open in application "
+               "or Open With…"));
+    section(tr("Preview limits"),
+            tr("Only local files are currently previewed. Text, image, and archive limits can be "
+               "adjusted in Configure KGlanceQT…. Remote Markdown images are not downloaded."));
+    details->setHtml(html);
+    layout->addWidget(details);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::close);
+    layout->addWidget(buttons);
+}

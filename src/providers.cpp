@@ -11,7 +11,7 @@
 #include <QLocale>
 #include <memory>
 
-ImageResult loadImage(const QString &path, std::stop_token cancellation)
+ImageResult loadImage(const QString &path, std::stop_token cancellation, int maxMegapixels)
 {
     if (cancellation.stop_requested())
     {
@@ -22,10 +22,12 @@ ImageResult loadImage(const QString &path, std::stop_token cancellation)
     // Bound decoded allocations; compressed file size is not a useful image
     // limit.
     const QSize size = reader.size();
-    constexpr qint64 maxPixels = 64 * 1024 * 1024;
+    const qint64 maxPixels = qBound(1, maxMegapixels, 64) * 1024LL * 1024;
     if (size.isValid() && qint64(size.width()) * size.height() > maxPixels)
     {
-        return {{}, QStringLiteral("Image exceeds the 64 megapixel preview limit.")};
+        return {{},
+                QStringLiteral("Image exceeds the %1 megapixel preview limit.")
+                    .arg(qBound(1, maxMegapixels, 64))};
     }
     auto image = reader.read();
     const QString error = image.isNull() ? reader.errorString() : QString{};
@@ -43,7 +45,8 @@ bool isArchive(const QString &mime)
            mime == QLatin1String("application/x-zstd-compressed-tar");
 }
 
-ArchiveResult listArchive(const QString &path, const QString &mime, std::stop_token cancellation)
+ArchiveResult listArchive(const QString &path, const QString &mime, std::stop_token cancellation,
+                          int maxEntries)
 {
     if (cancellation.stop_requested())
     {
@@ -77,7 +80,7 @@ ArchiveResult listArchive(const QString &path, const QString &mime, std::stop_to
         QString prefix;
     };
     QVector<Directory> pending{{archive->directory(), {}}};
-    constexpr qsizetype rowLimit = 10000;
+    const qsizetype rowLimit = qBound(1, maxEntries, 10000);
     while (!pending.isEmpty())
     {
         const auto directory = pending.takeLast();

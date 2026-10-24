@@ -4,11 +4,20 @@
 
 #include <QGraphicsView>
 
+struct ImageViewState
+{
+    QTransform transform;
+    QPointF center;
+    bool fitted = true;
+};
+
 class ImageView final : public QGraphicsView
 {
   public:
     explicit ImageView(const QImage &image, QWidget *parent = nullptr);
     void fit();
+    ImageViewState viewState() const;
+    void restoreViewState(const ImageViewState &state);
 
   protected:
     void wheelEvent(QWheelEvent *event) override;

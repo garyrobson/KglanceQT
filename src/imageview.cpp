@@ -3,6 +3,7 @@
 #include "imageview.h"
 
 #include <QGraphicsPixmapItem>
+#include <QTimer>
 #include <QWheelEvent>
 
 ImageView::ImageView(const QImage &image, QWidget *parent) : QGraphicsView(parent), scene_(this)
@@ -19,6 +20,30 @@ void ImageView::fit()
 {
     fitted_ = true;
     fitInView(scene_.itemsBoundingRect(), Qt::KeepAspectRatio);
+}
+
+ImageViewState ImageView::viewState() const
+{
+    return {transform(), mapToScene(viewport()->rect().center()), fitted_};
+}
+
+void ImageView::restoreViewState(const ImageViewState &state)
+{
+    fitted_ = state.fitted;
+    if (fitted_)
+        fit();
+    else
+    {
+        setTransform(state.transform);
+        centerOn(state.center);
+        // Scrollbars can resize the viewport on the next event-loop turn.
+        QTimer::singleShot(0, this,
+                           [this, state]
+                           {
+                               if (!fitted_ && transform() == state.transform)
+                                   centerOn(state.center);
+                           });
+    }
 }
 
 void ImageView::resizeEvent(QResizeEvent *event)

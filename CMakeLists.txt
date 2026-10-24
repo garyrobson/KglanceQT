@@ -11,15 +11,20 @@ find_package(KF6TextEditor 6.0 REQUIRED)
 find_package(KF6KIO 6.0 REQUIRED)
 find_package(KF6Archive 6.0 REQUIRED)
 find_package(KF6WindowSystem 6.0 REQUIRED)
+find_package(KF6BalooWidgets REQUIRED)
+find_package(KF6WidgetsAddons 6.0 REQUIRED)
 
 add_executable(kglanceqt src/main.cpp src/dolphinsetup.cpp src/dolphinsetup.h
     src/previewservice.h src/previewwindow.cpp src/previewwindow.h
-    src/providers.cpp src/providers.h src/imageview.cpp src/imageview.h)
+    src/providers.cpp src/providers.h src/imageview.cpp src/imageview.h
+    src/mediaview.cpp src/mediaview.h src/previewsurface.cpp src/previewsurface.h
+    src/markdownview.cpp src/markdownview.h src/informationpanel.cpp src/informationpanel.h
+    src/preferences.cpp src/preferences.h src/supportedtypesdialog.cpp src/supportedtypesdialog.h)
 target_compile_options(kglanceqt PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(kglanceqt PRIVATE KGLANCEQT_VERSION="${PROJECT_VERSION}")
 target_link_libraries(kglanceqt PRIVATE Qt6::Widgets Qt6::Xml Qt6::DBus Qt6::Concurrent
     Qt6::MultimediaWidgets KF6::Parts KF6::TextEditor KF6::KIOWidgets
-    KF6::Archive KF6::WindowSystem)
+    KF6::Archive KF6::WindowSystem KF6::BalooWidgets KF6::WidgetsAddons)
 install(TARGETS kglanceqt RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 configure_file(data/org.kglanceqt.KGlanceQT.desktop.in org.kglanceqt.KGlanceQT.desktop @ONLY)
 configure_file(data/kglanceqt.desktop.in kglanceqt.desktop @ONLY)
@@ -38,11 +43,15 @@ if(BUILD_TESTING)
     target_link_libraries(provider_tests PRIVATE Qt6::Test Qt6::Gui KF6::Archive)
     add_test(NAME providers COMMAND provider_tests)
     add_executable(window_tests tests/window_tests.cpp src/previewwindow.cpp src/previewwindow.h
-        src/providers.cpp src/providers.h src/imageview.cpp src/imageview.h)
+        src/providers.cpp src/providers.h src/imageview.cpp src/imageview.h
+        src/mediaview.cpp src/mediaview.h src/previewsurface.cpp src/previewsurface.h
+        src/markdownview.cpp src/markdownview.h src/informationpanel.cpp src/informationpanel.h
+        src/preferences.cpp src/preferences.h src/dolphinsetup.cpp src/dolphinsetup.h
+        src/supportedtypesdialog.cpp src/supportedtypesdialog.h)
     target_include_directories(window_tests PRIVATE src)
     target_link_libraries(window_tests PRIVATE Qt6::Test Qt6::Widgets Qt6::DBus Qt6::Concurrent
         Qt6::MultimediaWidgets KF6::Parts KF6::TextEditor KF6::KIOWidgets
-        KF6::Archive KF6::WindowSystem)
+        KF6::Archive KF6::WindowSystem KF6::BalooWidgets KF6::WidgetsAddons)
     add_test(NAME window COMMAND window_tests)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/test-config ${CMAKE_CURRENT_BINARY_DIR}/test-desktop)
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/test-config/user-dirs.dirs

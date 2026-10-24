@@ -32,6 +32,20 @@ class ProviderTests final : public QObject
         QVERIFY(!result.error.isEmpty());
     }
 
+    void configuredImageLimit()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("large.png"));
+        QImage image(1500, 1500, QImage::Format_RGB32);
+        image.fill(Qt::green);
+        QVERIFY(image.save(path));
+        const auto limited = loadImage(path, {}, 1);
+        QVERIFY(limited.image.isNull());
+        QVERIFY(limited.error.contains(QStringLiteral("1 megapixel")));
+        QVERIFY(!loadImage(path, {}, 4).image.isNull());
+    }
+
     void cancelledJobsDoNotOpenFiles()
     {
         std::stop_source stop;
@@ -72,6 +86,22 @@ class ProviderTests final : public QObject
         QCOMPARE(result.rows, QVector<ArchiveRow>{});
         QVERIFY(!result.error.isEmpty());
         QVERIFY(!result.truncated);
+    }
+
+    void configuredArchiveLimit()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("limited.zip"));
+        KZip archive(path);
+        QVERIFY(archive.open(QIODevice::WriteOnly));
+        QVERIFY(archive.writeFile(QStringLiteral("one.txt"), QByteArray("one")));
+        QVERIFY(archive.writeFile(QStringLiteral("two.txt"), QByteArray("two")));
+        QVERIFY(archive.close());
+        const auto result = listArchive(path, QStringLiteral("application/zip"), {}, 1);
+        QVERIFY(result.error.isEmpty());
+        QCOMPARE(result.rows.size(), 1);
+        QVERIFY(result.truncated);
     }
 };
 

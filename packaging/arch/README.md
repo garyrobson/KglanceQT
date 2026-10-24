@@ -10,6 +10,8 @@ checksum. It does not build the removed Rust application, install user settings,
 start a daemon automatically, or patch Plasma. Existing settings are retained on
 package removal. Runtime viewers/image plugins are declared as optional packages;
 Okular and DBus tools are required for the full test suite during builds.
+The information sidebar uses the installed `baloo-widgets` metadata component;
+native preferences use `kwidgetsaddons`. Both are declared runtime dependencies.
 
 `kglanceqt` conflicts with packaged `kglance`/`kglance-git`. Earlier manual copies
 under `~/.local` are not known to pacman and must be moved to Trash separately.
