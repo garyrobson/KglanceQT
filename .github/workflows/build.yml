@@ -10,7 +10,8 @@ jobs:
       - name: Install distribution dependencies
         run: >-
           pacman -Syu --noconfirm --needed git cmake ninja qt6-base qt6-multimedia
-          qt6-tools kparts ktexteditor kio karchive kwindowsystem okular python dbus
+          qt6-tools kparts ktexteditor kio karchive kwindowsystem baloo-widgets
+          kwidgetsaddons okular python dbus
       - uses: actions/checkout@v4
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr

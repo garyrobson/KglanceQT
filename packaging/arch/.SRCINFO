@@ -1,6 +1,6 @@
 pkgbase = kglanceqt
 	pkgdesc = Native Qt 6 and KDE Frameworks 6 file previews for Dolphin and Plasma
-	pkgver = 0.2.0
+	pkgver = 0.3.0alpha1
 	pkgrel = 1
 	url = https://github.com/garyrobson/KglanceQT
 	arch = x86_64
@@ -33,7 +33,7 @@ pkgbase = kglanceqt
 	conflicts = kglance
 	conflicts = kglance-git
 	options = !debug
-	source = kglanceqt-0.2.0.tar.gz::https://github.com/garyrobson/KglanceQT/archive/refs/tags/qt-v0.2.0.tar.gz
-	sha256sums = 2bb1e517266158226d58318196f97738a47e2e36491df99b3408ccf6026dc234
+	source = kglanceqt-0.3.0alpha1.tar.gz::https://github.com/garyrobson/KglanceQT/archive/refs/tags/qt-v0.3.0-alpha.1.tar.gz
+	sha256sums = 8a35cdf1686deebd1d2d3d79e7820b270f77d92e9100f1beb89b41de54dde15e
 
 pkgname = kglanceqt

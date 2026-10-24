@@ -19,9 +19,17 @@ The package installs only its own executable, application entry, KIO service
 action, license/attribution, and documentation under `/usr`.
 
 For a new application version, test and publish a new `qt-vVERSION` source tag,
-update `pkgver` and the archive checksum, reset `pkgrel` to 1, then regenerate
-`.SRCINFO` with `makepkg --printsrcinfo`. For packaging-only changes increment
+update `pkgver`, `_tag`, and the verified archive checksum, reset `pkgrel` to 1,
+then regenerate `.SRCINFO` with `makepkg --printsrcinfo`. Prereleases use Arch
+version notation, for example `0.3.0alpha1` for tag `qt-v0.3.0-alpha.1`, so the
+eventual stable version sorts newer. Use the exact source directory name from
+the downloaded archive. For packaging-only changes increment
 `pkgrel`. Do not move existing release tags or use unverified source checksums.
+
+The recipe on `main` and the recipe attached to a GitHub release are updated after
+its source tag is published, when the archive checksum can be verified. Use those
+recipes to build the release; a recipe inside a tagged source archive can still
+refer to the preceding release.
 
 Normal Qt 6/KF6 updates are consumed through the system shared libraries after
 restarting the app. Rebuild/test when a dependency changes ABI or toolchain

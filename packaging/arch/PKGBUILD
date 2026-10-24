@@ -1,6 +1,7 @@
 # Maintainer: Gary Robson
 pkgname=kglanceqt
-pkgver=0.2.0
+pkgver=0.3.0alpha1
+_tag=qt-v0.3.0-alpha.1
 pkgrel=1
 pkgdesc='Native Qt 6 and KDE Frameworks 6 file previews for Dolphin and Plasma'
 arch=('x86_64')
@@ -19,11 +20,11 @@ optdepends=('okular: PDF and supported document previews'
             'plasma-workspace: desktop:/ URLs and font viewer component')
 conflicts=('kglance' 'kglance-git')
 options=('!debug')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/qt-v$pkgver.tar.gz")
-sha256sums=('2bb1e517266158226d58318196f97738a47e2e36491df99b3408ccf6026dc234')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
+sha256sums=('8a35cdf1686deebd1d2d3d79e7820b270f77d92e9100f1beb89b41de54dde15e')
 
 build() {
-    cmake -S "$srcdir/KglanceQT-qt-v$pkgver" -B "$srcdir/build" -G Ninja \
+    cmake -S "$srcdir/KglanceQT-$_tag" -B "$srcdir/build" -G Ninja \
         -DCMAKE_BUILD_TYPE=None \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_INSTALL_LIBDIR=lib \
