@@ -184,7 +184,46 @@ MediaView::MediaView(const QUrl &url, const QMimeType &mime, QWidget *parent)
             [this](int value) { player_->setPosition(qint64(value) * 1000); });
     connect(player_, &QMediaPlayer::durationChanged, this, updateTime);
     connect(player_, &QMediaPlayer::positionChanged, this, updateTime);
+    connect(player_, &QMediaPlayer::seekableChanged, this, [this] { applyPosition(); });
+    connect(player_, &QMediaPlayer::durationChanged, this, [this] { applyPosition(); });
+    connect(player_, &QMediaPlayer::mediaStatusChanged, this, [this] { applyPosition(); });
     player_->setSource(url);
     if (video ? preferences.autoplayVideo : preferences.autoplayAudio)
         player_->play();
+}
+
+std::optional<MediaPosition> MediaView::position() const
+{
+    if (pending_)
+        return pending_;
+    if (player_->mediaStatus() == QMediaPlayer::LoadingMedia ||
+        player_->mediaStatus() == QMediaPlayer::NoMedia ||
+        player_->mediaStatus() == QMediaPlayer::InvalidMedia)
+        return std::nullopt;
+    return MediaPosition{player_->position(),
+                         player_->playbackState() == QMediaPlayer::PlayingState};
+}
+
+void MediaView::restorePosition(const MediaPosition &position)
+{
+    pending_ = position;
+    if (!position.playing)
+        player_->pause();
+    applyPosition();
+}
+
+void MediaView::applyPosition()
+{
+    if (!pending_ || !player_->isSeekable() || player_->duration() <= 0 ||
+        (player_->mediaStatus() != QMediaPlayer::LoadedMedia &&
+         player_->mediaStatus() != QMediaPlayer::BufferedMedia &&
+         player_->mediaStatus() != QMediaPlayer::BufferingMedia))
+        return;
+    const auto saved = *pending_;
+    pending_.reset();
+    player_->setPosition(qBound(qint64(0), saved.milliseconds, player_->duration() - 1));
+    if (saved.playing)
+        player_->play();
+    else
+        player_->pause();
 }

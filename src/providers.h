@@ -2,15 +2,20 @@
 
 #pragma once
 
+#include "imageanimation.h"
+
 #include <QImage>
 #include <QStringList>
 #include <QVector>
+#include <optional>
 #include <stop_token>
 
 struct ImageResult
 {
     QImage image;
     QString error;
+    std::optional<ImageAnimation> animation = std::nullopt;
+    QString notice = {};
 };
 
 struct ArchiveRow
@@ -29,6 +34,8 @@ struct ArchiveResult
 
 ImageResult loadImage(const QString &path, std::stop_token cancellation = {},
                       int maxMegapixels = 64);
+ImageResult loadImagePreview(const QString &path, std::stop_token cancellation = {},
+                             int maxMegapixels = 64, AnimationLimits limits = {});
 ArchiveResult listArchive(const QString &path, const QString &mime,
                           std::stop_token cancellation = {}, int maxEntries = 10000);
 bool isArchive(const QString &mime);

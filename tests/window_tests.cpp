@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+#include "filedragbutton.h"
 #include "informationpanel.h"
 #include "markdownview.h"
 #include "preferences.h"
 #include "previewwindow.h"
+#include "providers.h"
+#include "selectionfilmstrip.h"
 
+#include <KActionCollection>
+#include <KIO/PreviewJob>
+#include <KMessageWidget>
 #include <KParts/ReadOnlyPart>
 #include <KProtocolInfo>
 #include <KRatingWidget>
@@ -16,7 +22,9 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDataStream>
+#include <QDrag>
 #include <QFile>
+#include <QGraphicsPixmapItem>
 #include <QGraphicsView>
 #include <QImage>
 #include <QImageReader>
@@ -24,9 +32,13 @@
 #include <QLineEdit>
 #include <QMediaPlayer>
 #include <QMenu>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QPushButton>
+#include <QSaveFile>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSlider>
 #include <QSpinBox>
@@ -35,11 +47,27 @@
 #include <QTemporaryDir>
 #include <QTextBrowser>
 #include <QTextTable>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVideoWidget>
 #include <QtTest>
 #include <baloo/filemetadatawidget.h>
+
+namespace
+{
+bool writePreviewFile(const QString &path, const QByteArray &data)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(data) == data.size();
+}
+
+bool replacePreviewFile(const QString &path, const QByteArray &data)
+{
+    QSaveFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(data) == data.size() && file.commit();
+}
+} // namespace
 
 class WindowTests final : public QObject
 {
@@ -116,6 +144,103 @@ class WindowTests final : public QObject
         window.HidePreview();
     }
 
+    void fileDragGestureAndUrls()
+    {
+        FileDragButton button;
+        button.show();
+        QVERIFY(!button.isEnabled());
+        const auto url = QUrl::fromLocalFile(QStringLiteral("/tmp/file with #? ü.txt"));
+        button.setFile(url);
+        QVERIFY(button.isEnabled());
+        QVERIFY(button.toolTip().contains(url.fileName()));
+        auto move = [&button](int distance, Qt::MouseButtons buttons = Qt::LeftButton)
+        {
+            const auto point = button.rect().center() + QPoint(distance, 0);
+            QMouseEvent event(QEvent::MouseMove, QPointF(point), QPointF(button.mapToGlobal(point)),
+                              Qt::NoButton, buttons, Qt::NoModifier);
+            QApplication::sendEvent(&button, &event);
+        };
+        const int threshold = QApplication::startDragDistance();
+        QTest::mouseClick(&button, Qt::LeftButton);
+        move(threshold + 1);
+        QVERIFY(!button.findChild<QDrag *>());
+        QTest::mousePress(&button, Qt::RightButton);
+        move(threshold + 1, Qt::RightButton);
+        QVERIFY(!button.findChild<QDrag *>());
+        QTest::mouseRelease(&button, Qt::RightButton);
+        QTest::mousePress(&button, Qt::LeftButton);
+        move(qMax(0, threshold - 1));
+        QVERIFY(!button.findChild<QDrag *>());
+        // Inspect the real native drag while its event loop runs, then cancel it.
+        QList<QUrl> urls;
+        QByteArray uriList;
+        Qt::DropActions actions;
+        QTimer::singleShot(0, &button,
+                           [&]
+                           {
+                               if (auto *drag = button.findChild<QDrag *>())
+                               {
+                                   urls = drag->mimeData()->urls();
+                                   uriList =
+                                       drag->mimeData()->data(QStringLiteral("text/uri-list"));
+                                   actions = drag->supportedActions();
+                               }
+                               QDrag::cancel();
+                           });
+        move(threshold + 1);
+        QCoreApplication::processEvents();
+        QCOMPARE(urls, QList<QUrl>{url});
+        QCOMPARE(actions, Qt::CopyAction);
+        QVERIFY(uriList.contains("%23%3F"));
+        QVERIFY(uriList.contains("%C3%BC"));
+        QTest::mouseRelease(&button, Qt::LeftButton);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!button.findChild<QDrag *>());
+
+        // A selection change during a press must not drag the replacement file.
+        QTest::mousePress(&button, Qt::LeftButton);
+        button.setFile(QUrl::fromLocalFile(QStringLiteral("/tmp/replacement.txt")));
+        move(threshold + 1);
+        QVERIFY(!button.findChild<QDrag *>());
+        QTest::mouseRelease(&button, Qt::LeftButton);
+        button.setFile(QUrl(QStringLiteral("sftp://example.test/file")));
+        QVERIFY(!button.isEnabled());
+        button.setFile({});
+        QVERIFY(!button.isEnabled());
+    }
+
+    void fileDragFollowsCurrentFile()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("current.txt"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("preview\n");
+        file.close();
+        const QStringList paths{path, directory.filePath(QStringLiteral("missing.txt")),
+                                QStringLiteral("sftp://example.test/remote.txt")};
+        PreviewWindow window(false);
+        auto *button = window.findChild<FileDragButton *>();
+        QVERIFY(button);
+        QVERIFY(!button->isEnabled());
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QVERIFY(button->isEnabled());
+        QVERIFY(button->toolTip().contains(QStringLiteral("current.txt")));
+        QTest::keyClick(&window, Qt::Key_Right);
+        QVERIFY(!button->isEnabled());
+        QTest::keyClick(&window, Qt::Key_Right);
+        QVERIFY(!button->isEnabled());
+        QTest::keyClick(&window, Qt::Key_Right);
+        QVERIFY(button->isEnabled());
+        window.HidePreview();
+        QVERIFY(!button->isEnabled());
+        window.ShowPreview({directory.path()}, {});
+        QTRY_VERIFY(button->isEnabled());
+        window.HidePreview();
+    }
+
     void imagePositionMemory()
     {
         QTemporaryDir directory;
@@ -158,6 +283,259 @@ class WindowTests final : public QObject
         QTRY_VERIFY(currentImage());
         QVERIFY(currentImage()->viewState().fitted);
         window.HidePreview();
+    }
+
+    void animatedImagePlaybackAndCleanup()
+    {
+        const QString path = QFINDTESTDATA("data/animation.gif");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString next = directory.filePath(QStringLiteral("next.png"));
+        QImage still(32, 24, QImage::Format_RGB32);
+        still.fill(Qt::yellow);
+        QVERIFY(still.save(next));
+        const QStringList paths{path, next};
+        PreviewWindow window(false);
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QPointer<ImageView> image = window.findChild<ImageView *>();
+        QVERIFY(image->isAnimated());
+        QVERIFY(image->isPlaying());
+        auto *playback = window.findChild<QAction *>(QStringLiteral("animationPlayback"));
+        QVERIFY(playback);
+        QVERIFY(playback->isVisible());
+        QCOMPARE(playback->text(), QStringLiteral("Pause animation"));
+        QSignalSpy frames(image, &ImageView::frameChanged);
+        QTRY_VERIFY(!frames.isEmpty());
+        playback->trigger();
+        QVERIFY(!image->isPlaying());
+        QCOMPARE(playback->text(), QStringLiteral("Play animation"));
+        const int paused = image->currentFrame();
+        const int count = frames.count();
+        QTest::qWait(300);
+        QCOMPARE(image->currentFrame(), paused);
+        QCOMPARE(frames.count(), count);
+        ImageViewState zoom;
+        zoom.fitted = false;
+        zoom.transform.scale(3, 3);
+        zoom.center = QPointF(12, 8);
+        image->restoreViewState(zoom);
+        const auto saved = image->viewState();
+        playback->trigger();
+        QVERIFY(image->isPlaying());
+        QTRY_VERIFY(frames.count() > count);
+        QCOMPARE(image->viewState().transform, saved.transform);
+        QVERIFY(!image->viewState().fitted);
+
+        QTest::keyClick(&window, Qt::Key_Right);
+        QVERIFY(image.isNull());
+        QVERIFY(!playback->isVisible());
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QVERIFY(!window.findChild<ImageView *>()->isAnimated());
+        QTest::keyClick(&window, Qt::Key_Left);
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        image = window.findChild<ImageView *>();
+        QVERIFY(image->isAnimated());
+        QTRY_COMPARE(image->viewState().transform, saved.transform);
+        window.HidePreview();
+        QVERIFY(image.isNull());
+        QVERIFY(!playback->isVisible());
+        QCOMPARE(window.findChild<ImageView *>(), nullptr);
+        // A late decode must not resurrect content after navigation or hide.
+        window.ShowPreview(paths, {});
+        QCoreApplication::processEvents();
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QVERIFY(!window.findChild<ImageView *>()->isAnimated());
+        QVERIFY(!playback->isVisible());
+        window.HidePreview();
+        QCoreApplication::processEvents();
+        QCOMPARE(window.findChild<ImageView *>(), nullptr);
+    }
+
+    void animationFiniteLoopsAndReplay()
+    {
+        const auto decoded = loadImagePreview(QFINDTESTDATA("data/animation-once.gif"));
+        QVERIFY(decoded.animation);
+        ImageView image(decoded.image);
+        image.show();
+        auto animation = *decoded.animation;
+        animation.loops = 1;
+        QSignalSpy frames(&image, &ImageView::frameChanged);
+        image.setAnimation(animation, false);
+        QVERIFY(!image.isPlaying());
+        QCOMPARE(image.currentFrame(), 0);
+        frames.clear();
+        image.toggleAnimation();
+        QTRY_VERIFY(!image.isPlaying());
+        // Two passes: 1, 2, 0, 1, 2. Playback stops on the last frame.
+        QCOMPARE(frames.count(), 5);
+        QCOMPARE(image.currentFrame(), 2);
+        image.toggleAnimation();
+        QVERIFY(image.isPlaying());
+        QCOMPARE(image.currentFrame(), 0);
+        QTRY_VERIFY(!image.isPlaying());
+        QCOMPARE(image.currentFrame(), 2);
+        QCOMPARE(frames.count(), 11);
+    }
+
+    void animationPreferencesAndLimitNotice()
+    {
+        PreviewPreferences settings;
+        settings.autoplayAnimation = false;
+        settings.animationFrames = 2;
+        settings.animationMiB = 3;
+        QVERIFY(savePreferences(settings));
+        QCOMPARE(readPreferences().animationFrames, 2);
+        QCOMPARE(readPreferences().animationMiB, 3);
+        QVERIFY(!readPreferences().autoplayAnimation);
+        PreferencesDialog dialog;
+        auto *autoplay = dialog.findChild<QCheckBox *>(QStringLiteral("autoplayAnimation"));
+        auto *frames = dialog.findChild<QSpinBox *>(QStringLiteral("animationFrameLimit"));
+        auto *memory = dialog.findChild<QSpinBox *>(QStringLiteral("animationMemoryLimit"));
+        QVERIFY(autoplay);
+        QVERIFY(frames);
+        QVERIFY(memory);
+        QVERIFY(!autoplay->isChecked());
+        QCOMPARE(frames->value(), 2);
+        QCOMPARE(memory->value(), 3);
+        const QString path = QFINDTESTDATA("data/animation.gif");
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QVERIFY(!window.findChild<ImageView *>()->isAnimated());
+        auto *playback = window.findChild<QAction *>(QStringLiteral("animationPlayback"));
+        QVERIFY(!playback->isVisible());
+        bool explained = false;
+        for (const auto *label : window.findChildren<QLabel *>())
+            explained |= label->text().contains(QStringLiteral("2-frame preview limit"));
+        QVERIFY(explained);
+        window.HidePreview();
+        frames->setValue(256);
+        dialog.button(QDialogButtonBox::Apply)->click();
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        auto *image = window.findChild<ImageView *>();
+        QVERIFY(image->isAnimated());
+        QVERIFY(!image->isPlaying());
+        QVERIFY(playback->isVisible());
+        QCOMPARE(playback->text(), QStringLiteral("Play animation"));
+        playback->trigger();
+        QVERIFY(image->isPlaying());
+        window.HidePreview();
+        settings.animationFrames = 9999;
+        settings.animationMiB = -5;
+        QVERIFY(savePreferences(settings));
+        QCOMPARE(readPreferences().animationFrames, MaxAnimationFrames);
+        QCOMPARE(readPreferences().animationMiB, 1);
+    }
+
+    void selectionFilmstripNavigationAndLifecycle()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QStringList paths;
+        for (const auto &name : {QStringLiteral("first.txt"), QStringLiteral("second.txt"),
+                                 QStringLiteral("third.txt")})
+        {
+            QFile file(directory.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("preview\n");
+            paths.append(file.fileName());
+        }
+        PreviewWindow window(false);
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        auto *strip = window.findChild<SelectionFilmstrip *>();
+        auto *toggle = window.findChild<QAction *>(QStringLiteral("showFilmstrip"));
+        QVERIFY(strip);
+        QVERIFY(toggle);
+        QVERIFY(!strip->isVisible());
+        toggle->trigger();
+        QVERIFY(strip->isVisible());
+        QVERIFY(readPreferences().filmstrip);
+        QCOMPARE(strip->model()->rowCount(), 3);
+        QCOMPARE(strip->currentIndex().row(), 0);
+        QCOMPARE(strip->model()->index(1, 0).data().toString(), QStringLiteral("second.txt"));
+        QCOMPARE(strip->model()->index(1, 0).data(Qt::ToolTipRole).toString(), paths.at(1));
+        QTRY_VERIFY(!strip->visualRect(strip->model()->index(2, 0)).isEmpty());
+        QTest::mouseClick(strip->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          strip->visualRect(strip->model()->index(2, 0)).center());
+        QTRY_VERIFY(window.windowTitle().contains(QStringLiteral("third.txt")));
+        QCOMPARE(strip->currentIndex().row(), 2);
+        QTest::keyClick(strip, Qt::Key_Right);
+        QTRY_VERIFY(window.windowTitle().contains(QStringLiteral("first.txt")));
+        QCOMPARE(strip->currentIndex().row(), 0);
+
+        // Replacing a live selection resets both the model and the current item.
+        window.ShowPreview({paths.at(1), paths.at(2)}, {});
+        QTRY_VERIFY(window.windowTitle().contains(QStringLiteral("second.txt")));
+        QCOMPARE(strip->model()->rowCount(), 2);
+        QCOMPARE(strip->currentIndex().row(), 0);
+        window.HidePreview();
+        QCOMPARE(strip->model()->rowCount(), 0);
+        QVERIFY(!strip->isVisible());
+        window.ShowPreview({paths.first()}, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QVERIFY(!strip->isVisible());
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(strip->isVisible());
+        auto *configure = window.findChild<QAction *>(QStringLiteral("configureKGlanceQT"));
+        configure->trigger();
+        auto *dialog = window.findChild<PreferencesDialog *>();
+        QVERIFY(dialog);
+        auto *enabled = dialog->findChild<QCheckBox *>(QStringLiteral("defaultFilmstrip"));
+        QVERIFY(enabled);
+        QVERIFY(enabled->isChecked());
+        enabled->setChecked(false);
+        dialog->button(QDialogButtonBox::Apply)->click();
+        QVERIFY(!strip->isVisible());
+        QVERIFY(!toggle->isChecked());
+        QVERIFY(!readPreferences().filmstrip);
+        window.HidePreview();
+    }
+
+    void filmstripThumbnailsAndReplacement()
+    {
+        if (!KIO::PreviewJob::availablePlugins().contains(QStringLiteral("imagethumbnail")))
+            QSKIP("The optional KDE image thumbnailer is not installed.");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QStringList paths;
+        for (int i = 0; i < 40; ++i)
+        {
+            QImage image(100, 60, QImage::Format_RGB32);
+            image.fill(i == 39 ? Qt::blue : Qt::red);
+            const auto path = directory.filePath(QString::number(i) + QStringLiteral(".png"));
+            QVERIFY(image.save(path));
+            paths.append(path);
+        }
+        SelectionFilmstrip strip;
+        strip.resize(600, 120);
+        strip.setPaths(paths);
+        strip.setCurrent(0);
+        strip.show();
+        auto color = [&strip](int row)
+        {
+            const auto icon =
+                qvariant_cast<QIcon>(strip.model()->index(row, 0).data(Qt::DecorationRole));
+            const auto image = icon.pixmap(80, 64).toImage();
+            return image.isNull() ? QColor{} : image.pixelColor(image.rect().center());
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(color(0), QColor(Qt::red), 10000);
+        strip.setCurrent(39);
+        // Replace the selection while the scroll's next thumbnail request is pending.
+        strip.setPaths({paths.last(), paths.last()});
+        strip.setCurrent(0);
+        QTRY_COMPARE_WITH_TIMEOUT(color(0), QColor(Qt::blue), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(color(1), QColor(Qt::blue), 10000);
+        strip.hide();
+        strip.clear();
+        QCOMPARE(strip.model()->rowCount(), 0);
+        strip.setPaths({paths.first(), paths.at(1)});
+        strip.setCurrent(0);
+        strip.show();
+        QTRY_COMPARE_WITH_TIMEOUT(color(0), QColor(Qt::red), 10000);
     }
 
     void markdownRenderingAndSource()
@@ -216,6 +594,323 @@ class WindowTests final : public QObject
         tabs->setCurrentIndex(0);
         QTest::keyClick(browser, Qt::Key_Right);
         QCOMPARE(window.findChild<MarkdownView *>(), nullptr);
+        window.HidePreview();
+    }
+
+    void textPositionMemoryAndClear()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QStringList paths;
+        for (int i = 0; i < 2; ++i)
+        {
+            QFile file(directory.filePath(QString::number(i) + QStringLiteral(".txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            for (int line = 0; line < 500; ++line)
+                file.write("A line of text for reading position tests.\n");
+            paths.append(file.fileName());
+        }
+        PreviewWindow window(false);
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        auto *view = window.findChild<KTextEditor::View *>();
+        view->setCursorPosition(KTextEditor::Cursor(140, 3));
+        view->setScrollPosition(KTextEditor::Cursor(130, 0));
+        QTRY_COMPARE(view->firstDisplayedLine(), 130);
+        const auto saved = textPosition(view);
+        QTest::keyClick(&window, Qt::Key_Right);
+        view = window.findChild<KTextEditor::View *>();
+        QVERIFY(view);
+        QCOMPARE(view->firstDisplayedLine(), 0);
+        QTest::keyClick(&window, Qt::Key_Left);
+        view = window.findChild<KTextEditor::View *>();
+        QTRY_COMPARE(view->cursorPosition(), saved.cursor);
+        QTRY_COMPARE(view->firstDisplayedLine(), saved.firstLine);
+
+        // A second navigation before deferred restoration must retain the saved state.
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        view = window.findChild<KTextEditor::View *>();
+        QTRY_COMPARE(view->firstDisplayedLine(), saved.firstLine);
+        auto *clear = window.findChild<QAction *>(QStringLiteral("clearPositions"));
+        QVERIFY(clear);
+        clear->trigger();
+        view = window.findChild<KTextEditor::View *>();
+        QCOMPARE(view->firstDisplayedLine(), 0);
+        QCOMPARE(view->cursorPosition(), KTextEditor::Cursor(0, 0));
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        view = window.findChild<KTextEditor::View *>();
+        QTRY_COMPARE(view->firstDisplayedLine(), 0);
+        view->setScrollPosition(KTextEditor::Cursor(100, 0));
+        window.HidePreview();
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QCOMPARE(window.findChild<KTextEditor::View *>()->firstDisplayedLine(), 0);
+        window.HidePreview();
+    }
+
+    void fileRefreshPreservesTextAndRecoversMissingFile()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("reading.txt"));
+        const QByteArray body = QByteArray("A line of text to scroll through.\n").repeated(500);
+        QVERIFY(writePreviewFile(path, "original\n" + body));
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QPointer<KTextEditor::View> old = window.findChild<KTextEditor::View *>();
+        old->setCursorPosition(KTextEditor::Cursor(150, 4));
+        old->setScrollPosition(KTextEditor::Cursor(140, 0));
+        QTRY_COMPARE(old->firstDisplayedLine(), 140);
+        const auto saved = textPosition(old);
+        QVERIFY(writePreviewFile(path, "updated\n" + body));
+        QTRY_VERIFY(old.isNull());
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        auto *view = window.findChild<KTextEditor::View *>();
+        QVERIFY(view->document()->text().startsWith(QStringLiteral("updated\n")));
+        QTRY_COMPARE(view->cursorPosition(), saved.cursor);
+        QTRY_COMPARE(view->firstDisplayedLine(), saved.firstLine);
+        auto *notice = window.findChild<KMessageWidget *>(QStringLiteral("fileChangeNotice"));
+        QVERIFY(notice);
+        QVERIFY(notice->isVisible());
+        QVERIFY(notice->text().contains(QStringLiteral("changed on disk")));
+        old = view;
+        QVERIFY(replacePreviewFile(path, "replaced\n" + body));
+        QTRY_VERIFY(old.isNull());
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QVERIFY(window.findChild<KTextEditor::View *>()->document()->text().startsWith(
+            QStringLiteral("replaced\n")));
+        QVERIFY(notice->text().contains(QStringLiteral("replaced on disk")));
+        QVERIFY(QFile::remove(path));
+        QTRY_COMPARE(window.findChild<KTextEditor::View *>(), nullptr);
+        QVERIFY(notice->text().contains(QStringLiteral("removed or moved")));
+        auto *drag = window.findChild<FileDragButton *>();
+        QVERIFY(!drag->isEnabled());
+        QVERIFY(writePreviewFile(path, "shorter\nrestored"));
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        view = window.findChild<KTextEditor::View *>();
+        QVERIFY(view->document()->text().startsWith(QStringLiteral("shorter\n")));
+        QVERIFY(notice->text().contains(QStringLiteral("available again")));
+        QTRY_VERIFY(view->cursorPosition().line() < view->document()->lines());
+        QVERIFY(drag->isEnabled());
+        window.HidePreview();
+    }
+
+    void fileRefreshUpdatesImageAndThumbnail()
+    {
+        if (!KIO::PreviewJob::availablePlugins().contains(QStringLiteral("imagethumbnail")))
+            QSKIP("The optional KDE image thumbnailer is not installed.");
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("current.png"));
+        const auto next = directory.filePath(QStringLiteral("next.png"));
+        QImage source(1200, 900, QImage::Format_RGB32);
+        source.fill(Qt::green);
+        QVERIFY(source.save(path));
+        QVERIFY(source.save(next));
+        QSettings().setValue(QStringLiteral("window/filmstrip"), true);
+        PreviewWindow window(false);
+        window.ShowPreview({path, next}, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QPointer<ImageView> old = window.findChild<ImageView *>();
+        ImageViewState state;
+        state.fitted = false;
+        state.transform.scale(2, 2);
+        state.center = QPointF(700, 500);
+        old->restoreViewState(state);
+        const auto saved = old->viewState();
+        auto *strip = window.findChild<SelectionFilmstrip *>();
+        auto thumbnailColor = [strip]
+        {
+            const auto icon =
+                qvariant_cast<QIcon>(strip->model()->index(0, 0).data(Qt::DecorationRole));
+            const auto image = icon.pixmap(80, 64).toImage();
+            return image.isNull() ? QColor{} : image.pixelColor(image.rect().center());
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(thumbnailColor(), QColor(Qt::green), 10000);
+        source.fill(Qt::red);
+        QSaveFile replacement(path);
+        QVERIFY(replacement.open(QIODevice::WriteOnly));
+        QVERIFY(source.save(&replacement, "PNG"));
+        QVERIFY(replacement.commit());
+        QTRY_VERIFY(old.isNull());
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        auto *image = window.findChild<ImageView *>();
+        QTRY_COMPARE(image->viewState().transform, saved.transform);
+        QTRY_VERIFY(QLineF(image->viewState().center, saved.center).length() < 2);
+        auto *pixmap = qgraphicsitem_cast<QGraphicsPixmapItem *>(image->scene()->items().first());
+        QVERIFY(pixmap);
+        QCOMPARE(pixmap->pixmap().toImage().pixelColor(0, 0), QColor(Qt::red));
+        QTRY_COMPARE_WITH_TIMEOUT(thumbnailColor(), QColor(Qt::red), 10000);
+        QCOMPARE(strip->currentIndex().row(), 0);
+        // An event already queued for this file must not reload the next item.
+        source.fill(Qt::blue);
+        QVERIFY(source.save(path));
+        QCoreApplication::processEvents();
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QPointer<ImageView> nextImage = window.findChild<ImageView *>();
+        QTest::qWait(400);
+        QVERIFY(nextImage);
+        QVERIFY(window.windowTitle().contains(QStringLiteral("next.png")));
+        window.HidePreview();
+        auto *monitor = window.findChild<FileMonitor *>();
+        QVERIFY(monitor);
+        auto *watcher = monitor->findChild<QFileSystemWatcher *>();
+        QVERIFY(watcher->files().isEmpty());
+        QVERIFY(watcher->directories().isEmpty());
+        QVERIFY(source.save(next));
+        QTest::qWait(400);
+        QCOMPARE(window.findChild<ImageView *>(), nullptr);
+        QVERIFY(!window.IsVisible());
+    }
+
+    void fileRefreshKeepsPausedAnimationFrame()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QFile fixture(QFINDTESTDATA("data/animation.gif"));
+        QVERIFY(fixture.open(QIODevice::ReadOnly));
+        const auto data = fixture.readAll();
+        const auto path = directory.filePath(QStringLiteral("animation.gif"));
+        QVERIFY(writePreviewFile(path, data));
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        QPointer<ImageView> old = window.findChild<ImageView *>();
+        QTRY_VERIFY(old->currentFrame() > 0);
+        old->toggleAnimation();
+        QVERIFY(!old->isPlaying());
+        const auto frame = old->currentFrame();
+        QVERIFY(replacePreviewFile(path, data));
+        QTRY_VERIFY(old.isNull());
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        auto *image = window.findChild<ImageView *>();
+        QTRY_VERIFY(!image->isPlaying());
+        QCOMPARE(image->currentFrame(), frame);
+        window.HidePreview();
+    }
+
+    void explicitRefreshPreservesPosition()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("manual.txt"));
+        QVERIFY(writePreviewFile(path, QByteArray("text\n").repeated(400)));
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QPointer<KTextEditor::View> old = window.findChild<KTextEditor::View *>();
+        old->setCursorPosition(KTextEditor::Cursor(110, 2));
+        old->setScrollPosition(KTextEditor::Cursor(100, 0));
+        QTRY_COMPARE(old->firstDisplayedLine(), 100);
+        QTest::keyClick(&window, Qt::Key_F5);
+        QTRY_VERIFY(old.isNull());
+        auto *view = window.findChild<KTextEditor::View *>();
+        QVERIFY(view);
+        QTRY_COMPARE(view->firstDisplayedLine(), 100);
+        QCOMPARE(view->cursorPosition(), KTextEditor::Cursor(110, 2));
+        window.HidePreview();
+    }
+
+    void markdownPositionAndModeMemory()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QFile file(directory.filePath(QStringLiteral("reading.md")));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        for (int i = 0; i < 300; ++i)
+            file.write("## Heading\n\nA paragraph of **Markdown** to scroll through.\n\n");
+        file.close();
+        const QStringList paths{file.fileName(), directory.filePath(QStringLiteral("missing.txt"))};
+        PreviewWindow window(false);
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        auto *browser = window.findChild<QTextBrowser *>(QStringLiteral("markdownPreview"));
+        QTRY_VERIFY(browser->verticalScrollBar()->maximum() > 1000);
+        browser->verticalScrollBar()->setValue(700);
+        auto *tabs = window.findChild<QTabBar *>(QStringLiteral("markdownMode"));
+        tabs->setCurrentIndex(1);
+        auto *source = window.findChild<KTextEditor::View *>();
+        source->setCursorPosition(KTextEditor::Cursor(210, 4));
+        source->setScrollPosition(KTextEditor::Cursor(200, 0));
+        QTRY_COMPARE(source->firstDisplayedLine(), 200);
+        const auto saved = window.findChild<MarkdownView *>()->position();
+        QVERIFY(saved);
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        tabs = window.findChild<QTabBar *>(QStringLiteral("markdownMode"));
+        QTRY_COMPARE(tabs->currentIndex(), 1);
+        source = window.findChild<KTextEditor::View *>();
+        QTRY_COMPARE(source->cursorPosition(), saved->text.cursor);
+        QTRY_COMPARE(source->firstDisplayedLine(), saved->text.firstLine);
+        tabs->setCurrentIndex(0);
+        browser = window.findChild<QTextBrowser *>(QStringLiteral("markdownPreview"));
+        QTRY_COMPARE(browser->verticalScrollBar()->value(), saved->vertical);
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        // Leave while Markdown is still loading, then return once more.
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        browser = window.findChild<QTextBrowser *>(QStringLiteral("markdownPreview"));
+        QTRY_COMPARE(browser->verticalScrollBar()->value(), saved->vertical);
+        window.HidePreview();
+        window.ShowPreview(paths, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        tabs = window.findChild<QTabBar *>(QStringLiteral("markdownMode"));
+        QCOMPARE(tabs->currentIndex(), 0);
+        browser = window.findChild<QTextBrowser *>(QStringLiteral("markdownPreview"));
+        QCOMPARE(browser->verticalScrollBar()->value(), 0);
+        window.HidePreview();
+    }
+
+    void documentNavigationPositionMemory()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("pages.pdf"));
+        {
+            QPdfWriter pdf(path);
+            QPainter painter(&pdf);
+            for (int page = 0; page < 3; ++page)
+            {
+                if (page)
+                    QVERIFY(pdf.newPage());
+                painter.drawText(100, 100, QStringLiteral("Page %1").arg(page + 1));
+            }
+        }
+        PreviewWindow window(false);
+        window.ShowPreview({path, directory.filePath(QStringLiteral("missing.txt"))}, {});
+        QTRY_VERIFY(window.findChild<KParts::ReadOnlyPart *>());
+        auto *part = window.findChild<KParts::ReadOnlyPart *>();
+        auto page = [&window]
+        {
+            uint page = 0;
+            auto *part = window.findChild<KParts::ReadOnlyPart *>();
+            QMetaObject::invokeMethod(part, "currentPage", Qt::DirectConnection,
+                                      Q_RETURN_ARG(uint, page));
+            return page;
+        };
+        auto *next = part->actionCollection()->action(QStringLiteral("go_next"));
+        QVERIFY(next);
+        QTRY_VERIFY(next->isEnabled());
+        QTRY_COMPARE(page(), 1U);
+        next->trigger();
+        QTRY_COMPARE(page(), 2U);
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTest::keyClick(&window, Qt::Key_Left);
+        QTRY_VERIFY(window.findChild<KParts::ReadOnlyPart *>());
+        QTRY_COMPARE(page(), 2U);
+        auto *clear = window.findChild<QAction *>(QStringLiteral("clearPositions"));
+        clear->trigger();
+        QTRY_VERIFY(window.findChild<KParts::ReadOnlyPart *>());
+        QTRY_COMPARE(page(), 1U);
         window.HidePreview();
     }
 
@@ -409,12 +1104,20 @@ class WindowTests final : public QObject
         QVERIFY(qAbs(player->audioOutput()->volume() - 0.35f) < 0.01f);
         QTest::mouseClick(play, Qt::LeftButton);
         QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+        player->pause();
+        player->setPosition(4000);
+        QTRY_COMPARE(player->position(), qint64(4000));
         QTest::keyClick(&window, Qt::Key_Right);
         QVERIFY(player.isNull());
         QCOMPARE(window.findChild<QWidget *>(QStringLiteral("audioControls")), nullptr);
         surface = window.findChild<QWidget *>(QStringLiteral("previewSurface"));
         QVERIFY(surface);
         QCOMPARE(surface->property("mimeType").toString(), QStringLiteral("image/png"));
+        QTest::keyClick(&window, Qt::Key_Left);
+        QTRY_VERIFY(window.findChild<QMediaPlayer *>());
+        player = window.findChild<QMediaPlayer *>();
+        QTRY_COMPARE(player->position(), qint64(4000));
+        QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
         window.HidePreview();
         QCOMPARE(window.findChild<QWidget *>(QStringLiteral("previewSurface")), nullptr);
     }

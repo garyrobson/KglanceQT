@@ -55,7 +55,11 @@ SupportedTypesDialog::SupportedTypesDialog(QWidget *parent) : QDialog(parent)
     section(tr("Images available on this computer"),
             (formats.isEmpty() ? tr("No image formats were detected.")
                                : formats.join(QStringLiteral(", ")) + QStringLiteral(".")) +
-                QStringLiteral(" ") + tr("Animated images currently show a still frame."));
+                QStringLiteral(" ") +
+                tr("Animated images play when the installed Qt plugin "
+                   "supports animation. Use the toolbar to pause/resume. "
+                   "Animations exceeding the frame, memory, or decoding-time "
+                   "limit show their first frame with an explanation."));
     section(tr("Audio and video"),
             tr("Common containers include MP3, FLAC, Ogg, WAV, MP4, WebM, and MKV. Playback "
                "depends on the installed media backend and codecs; not every file in a container "

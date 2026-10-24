@@ -16,15 +16,17 @@ preview defaults, limits, and Dolphin shortcut configuration.
 - [x] Add native Open With, Show in File Manager, and Copy Location actions.
 - [x] Remember image zoom, pan, and fit mode while navigating a selection. Keep
   this state in memory and clear it when the preview is hidden or a new selection opens.
-- [ ] Add an optional selection filmstrip with thumbnails and the current item
+- [x] Add an optional selection filmstrip with thumbnails and the current item
   highlighted. Bound thumbnail work and reject results from previous selections.
-- [ ] Extend session position memory to text/Markdown scroll positions, Markdown
+- [x] Extend session position memory to text/Markdown scroll positions, Markdown
   mode, document pages where supported by public APIs, and media playback positions.
   Make any persistent history optional and provide a way to clear it.
-- [ ] Support dragging the current file into other applications using file URLs.
-- [ ] Play animated images supported by installed Qt plugins, with pause/resume,
+  Implemented as session-only memory, with a Clear Remembered Positions action;
+  no persistent position history is stored.
+- [x] Support dragging the current file into other applications using file URLs.
+- [x] Play animated images supported by installed Qt plugins, with pause/resume,
   bounded decoding and frame memory, and cancellation on navigation/hide.
-- [ ] Refresh changed files with debounced filesystem monitoring, preserving the
+- [x] Refresh changed files with debounced filesystem monitoring, preserving the
   viewing position where possible and showing clear missing/replaced-file states.
 
 ### Comparison and file triage
@@ -47,6 +49,10 @@ preview defaults, limits, and Dolphin shortcut configuration.
 
 ### KDE polish and validation
 
+- [ ] **High priority:** Create a distinctive application icon that communicates
+  quick file previewing and looks at home in Plasma's Breeze theme. Provide a
+  scalable icon with clear small-size variants, verify it against light and dark
+  panels, and use it consistently in the launcher, task switcher, and window.
 - [ ] Adopt KDE standard actions/shortcuts where appropriate and provide configurable
   application shortcuts while preserving Space as the default preview activator.
 - [ ] Audit keyboard focus, accessible names, screen-reader behaviour, and Breeze

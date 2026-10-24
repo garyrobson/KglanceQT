@@ -61,7 +61,7 @@ implemented**. A supported desktop keyboard integration remains on the roadmap.
 | --- | --- |
 | Text / source code | Read-only KTextEditor, including highlighting, search, selection and copy |
 | Markdown | Qt rendered preview with tables, task lists, local images, heading links, and a KTextEditor source view |
-| Images and SVG | QImageReader and installed Qt/KDE image plugins; wheel zoom, drag to pan, Ctrl+0 to fit |
+| Images and SVG | QImageReader and installed Qt/KDE image plugins; bounded animation playback, wheel zoom, drag to pan, Ctrl+0 to fit |
 | PDF and supported documents | Installed Okular read-only KPart |
 | Fonts | Installed font-viewer KPart, where available |
 | Audio / video | Qt Multimedia, with play/pause and seeking |
@@ -84,10 +84,56 @@ The application menu contains **Open With…**, **Show in File Manager**, and
 background preview service; Space, Esc, and closing the window normally just hide
 the preview. To start the service again without opening a preview, run
 `kglanceqt --daemon`. Previewing a file through the Dolphin action also starts it.
-Image zoom, pan, and fit mode are remembered when navigating the current selection;
-this memory is cleared when the preview is hidden or a new selection opens.
+
+Image zoom, pan, and fit mode, text scroll/cursor positions, Markdown mode and
+scrolling, and seekable media positions and play/pause state are remembered when
+navigating the current selection. Document viewers that expose KDE's public
+page navigation methods also restore their document page (supported by Okular).
+Viewer support can vary. These positions stay in memory and clear when the preview
+is hidden or a new selection opens. KGlanceQT does not persist this position
+history; embedded viewers still manage their own settings.
+**Application menu → Clear Remembered Positions** clears the selection's
+saved positions and resets the current preview to its defaults.
+
+Enable **Application menu → Show Selection Filmstrip** to show a thumbnail strip
+for multiple selected files. Click a file to preview it; the current file stays
+highlighted. The setting is also available in preferences. Thumbnails use installed
+KDE thumbnailers, with filenames and fallback icons when unavailable. Requests are
+debounced and limited to 17 nearby local files, with up to 32 thumbnails held in
+memory; hiding the preview cancels requests and clears the cache. Virtual and
+remote locations retain fallback icons.
 Use **Application menu → Help → Supported Preview Types…** to see the preview
 categories, detected image formats, optional viewer availability, and limitations.
+
+Drag the **Drag file** handle in the preview toolbar into another application to
+open or attach the current local file, or into a file manager to copy it. The
+handle uses the file's type icon and works for folders too. It offers a standard
+file URL with copy semantics; the destination decides how to use it. It is disabled
+for missing files, unsupported remote locations, and unresolved desktop URLs.
+
+Animated images play automatically when their installed Qt plugin supports it.
+Use the toolbar's **Pause animation / Play animation** action to pause, resume, or
+replay a finished animation. Frame delays and finite loop counts are respected;
+delays below 20 ms are clamped to 20 ms. Zoom and pan remain available during
+playback. Preferences can disable animation autoplay or lower its frame/cache
+limits. Decoding runs in workers and stops between frames on navigation or hide;
+late results are discarded. Markdown images remain still previews.
+
+The current local file refreshes automatically after changes on disk, including
+atomic saves and resolved desktop files. Save bursts are coalesced for 250 ms;
+continuous writes are checked at least once per second. An inline message
+distinguishes changed, replaced, missing, and inaccessible files. Missing files
+reload when they reappear, including after a parent directory is recreated.
+Image zoom/pan, paused animation frames, text/Markdown positions, supported
+document pages, and seekable media positions are restored where possible, with
+positions clamped to the new content. The current filmstrip thumbnail is refreshed
+too. Folder listings retain their native live model and expansion state.
+Use **Application menu → Refresh Preview** (F5) to refresh manually. Only the
+current path, its parent, and any resolved symlink target are watched (at most
+four paths). Hiding the preview removes watches and cancels pending refreshes;
+changes in other selected files are loaded when you navigate to them. Automatic
+monitoring depends on filesystem support; a warning appears if monitoring cannot
+be installed.
 
 Markdown opens in **Preview** by default; **Source** shows the original text.
 Use Ctrl+F to search the rendered preview and Ctrl++ / Ctrl+- to zoom. External
@@ -100,11 +146,11 @@ the file and installed KDE extractors, including image dimensions, camera data,
 media details, and document properties. Detailed extraction is limited to regular
 files up to 256 MiB; folders and larger files retain basic file information.
 
-Open **Configure KGlanceQT…** from the toolbar (Ctrl+Shift+,) for audio/video
+Open **Configure KGlanceQT…** from the toolbar (Ctrl+Shift+,) for audio/video/animation
 autoplay, default volume, Markdown's initial view, sidebar visibility, and text,
-image, and archive limits. Preview defaults apply to the next file; volume and
-sidebar visibility update immediately. The Dolphin shortcut page has a separate
-**Apply shortcut to Dolphin** button, preserves conflicting assignments, and
+image, animation, and archive limits. Preview defaults apply to the next file; volume,
+sidebar, and filmstrip visibility update immediately. The Dolphin shortcut page has
+a separate **Apply shortcut to Dolphin** button, preserves conflicting assignments, and
 backs up existing configuration. Normal preference changes do not modify Dolphin.
 
 ```sh
@@ -138,16 +184,23 @@ create Unix sockets; it does not address the user's live preview process.
 
 ## Current limits
 
-Animated images display a static frame, and Office formats may have only a
-thumbnail. Spreadsheet/SQLite tables, reading positions, trash/undo, custom shell actions and
-3D previews are not implemented. This is a replacement project, not a claim of
-complete feature parity with the old application. See [ROADMAP.md](ROADMAP.md).
+Animations exceeding the configured limits show their first frame with an
+explanation. Office formats may have only a thumbnail.
+Spreadsheet/SQLite tables, persistent reading history, trash/undo,
+custom shell actions and 3D previews are not implemented. This is a replacement
+project, not a claim of complete feature parity with the old application. See [ROADMAP.md](ROADMAP.md).
 
 Text previews are limited to 16 MiB; images to 64 megapixels and a 256 MiB reader
 allocation budget; archive listings to 10,000 entries. Preferences can lower
 these limits. Markdown rendering is capped at 256 KiB and 4,000 lines, with larger
 documents shown as source within the text limit. Up to 16 local Markdown images
 of 4 megapixels each can load, displayed at up to 1024 pixels per side.
+Animation previews cache at most 256 frames and 64 MiB of decoded frames per
+preview, with a five-second decoding budget checked between frames. Preferences
+can lower the frame and memory limits. The cache budget counts at least four
+bytes per pixel; image-reader working memory and the displayed pixmap are
+additional. A decode already in progress cannot be interrupted, so an individual
+frame can overrun the time budget before playback falls back to a still image.
 Worker jobs use two threads
 and request generations prevent stale results. Archive traversal checks
 cancellation, but an image decode already running cannot be interrupted. KParts

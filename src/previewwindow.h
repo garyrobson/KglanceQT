@@ -2,7 +2,9 @@
 
 #pragma once
 
+#include "filemonitor.h"
 #include "imageview.h"
+#include "viewposition.h"
 
 #include <QHash>
 #include <QMainWindow>
@@ -18,6 +20,10 @@ class KJob;
 class InformationPanel;
 class PreferencesDialog;
 class SupportedTypesDialog;
+class SelectionFilmstrip;
+class FileDragButton;
+class QAction;
+class KMessageWidget;
 namespace KParts
 {
 class ReadOnlyPart;
@@ -40,8 +46,11 @@ class PreviewWindow final : public QMainWindow
   private:
     void loadCurrent();
     void loadLocal(const QUrl &url);
+    void refreshCurrent(const QString &path, FileMonitor::Change change);
     void clearContent();
     void navigate(int offset);
+    void rememberPosition();
+    void clearPositions();
     void message(const QString &text);
     void showContent(QWidget *widget);
     bool showPart(const QUrl &url, const QString &mime);
@@ -53,9 +62,16 @@ class PreviewWindow final : public QMainWindow
     QStackedWidget *content_;
     QLabel *info_;
     InformationPanel *information_;
+    SelectionFilmstrip *filmstrip_;
+    FileDragButton *dragFile_;
+    QAction *animationPlayback_;
+    FileMonitor *fileMonitor_;
+    KMessageWidget *fileNotice_;
     QStringList paths_;
     QUrl currentUrl_;
     QHash<QUrl, ImageViewState> imageStates_;
+    QHash<QUrl, PreviewPosition> positions_;
+    bool positionPending_ = false;
     int index_ = 0;
     quint64 generation_ = 0;
     std::stop_source workerStop_;

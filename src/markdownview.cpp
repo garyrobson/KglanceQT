@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -21,6 +22,7 @@
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTextCursor>
+#include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QtConcurrentRun>
@@ -282,6 +284,9 @@ MarkdownView::MarkdownView(const QString &path, QWidget *parent) : QWidget(paren
             }
             if (!tabs->currentIndex())
                 browser->setFocus();
+            ready_ = true;
+            if (pending_)
+                restorePosition(*pending_);
         });
     const auto limit =
         qBound(1, QSettings().value(QStringLiteral("limits/textMiB"), 16).toInt(), 16) * 1024LL *
@@ -290,3 +295,35 @@ MarkdownView::MarkdownView(const QString &path, QWidget *parent) : QWidget(paren
 }
 
 MarkdownView::~MarkdownView() { stop_.request_stop(); }
+
+std::optional<MarkdownPosition> MarkdownView::position() const
+{
+    if (!ready_ || pending_)
+        return pending_;
+    const auto *tabs = findChild<QTabBar *>(QStringLiteral("markdownMode"));
+    const auto *browser = findChild<QTextBrowser *>(QStringLiteral("markdownPreview"));
+    auto *source = findChild<KTextEditor::View *>();
+    return MarkdownPosition{tabs->currentIndex() == 1, browser->verticalScrollBar()->value(),
+                            browser->horizontalScrollBar()->value(), textPosition(source)};
+}
+
+void MarkdownView::restorePosition(const MarkdownPosition &position)
+{
+    pending_ = position;
+    if (!ready_)
+        return;
+    auto *tabs = findChild<QTabBar *>(QStringLiteral("markdownMode"));
+    tabs->setCurrentIndex(position.source || !tabs->isTabEnabled(0) ? 1 : 0);
+    // Apply after the selected page has its final viewport geometry. The context
+    // object cancels this callback if navigation destroys the view first.
+    QTimer::singleShot(0, this,
+                       [this, position]
+                       {
+                           auto *browser =
+                               findChild<QTextBrowser *>(QStringLiteral("markdownPreview"));
+                           browser->verticalScrollBar()->setValue(position.vertical);
+                           browser->horizontalScrollBar()->setValue(position.horizontal);
+                           restoreTextPosition(findChild<KTextEditor::View *>(), position.text);
+                           pending_.reset();
+                       });
+}

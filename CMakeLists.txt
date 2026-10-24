@@ -20,7 +20,10 @@ add_executable(kglanceqt src/main.cpp src/dolphinsetup.cpp src/dolphinsetup.h
     src/providers.cpp src/providers.h src/imageview.cpp src/imageview.h
     src/mediaview.cpp src/mediaview.h src/previewsurface.cpp src/previewsurface.h
     src/markdownview.cpp src/markdownview.h src/informationpanel.cpp src/informationpanel.h
-    src/preferences.cpp src/preferences.h src/supportedtypesdialog.cpp src/supportedtypesdialog.h)
+    src/preferences.cpp src/preferences.h src/supportedtypesdialog.cpp src/supportedtypesdialog.h
+    src/selectionfilmstrip.cpp src/selectionfilmstrip.h src/viewposition.cpp src/viewposition.h
+    src/filedragbutton.cpp src/filedragbutton.h src/imageanimation.h
+    src/filemonitor.cpp src/filemonitor.h)
 target_compile_options(kglanceqt PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(kglanceqt PRIVATE KGLANCEQT_VERSION="${KGLANCEQT_VERSION}")
 target_link_libraries(kglanceqt PRIVATE Qt6::Widgets Qt6::Xml Qt6::DBus Qt6::Concurrent
@@ -43,12 +46,19 @@ if(BUILD_TESTING)
     target_include_directories(provider_tests PRIVATE src)
     target_link_libraries(provider_tests PRIVATE Qt6::Test Qt6::Gui KF6::Archive)
     add_test(NAME providers COMMAND provider_tests)
+    add_executable(filemonitor_tests tests/filemonitor_tests.cpp src/filemonitor.cpp src/filemonitor.h)
+    target_include_directories(filemonitor_tests PRIVATE src)
+    target_link_libraries(filemonitor_tests PRIVATE Qt6::Test)
+    add_test(NAME filemonitor COMMAND filemonitor_tests)
     add_executable(window_tests tests/window_tests.cpp src/previewwindow.cpp src/previewwindow.h
         src/providers.cpp src/providers.h src/imageview.cpp src/imageview.h
         src/mediaview.cpp src/mediaview.h src/previewsurface.cpp src/previewsurface.h
         src/markdownview.cpp src/markdownview.h src/informationpanel.cpp src/informationpanel.h
         src/preferences.cpp src/preferences.h src/dolphinsetup.cpp src/dolphinsetup.h
-        src/supportedtypesdialog.cpp src/supportedtypesdialog.h)
+        src/supportedtypesdialog.cpp src/supportedtypesdialog.h
+        src/selectionfilmstrip.cpp src/selectionfilmstrip.h src/viewposition.cpp src/viewposition.h
+        src/filedragbutton.cpp src/filedragbutton.h src/imageanimation.h
+        src/filemonitor.cpp src/filemonitor.h)
     target_include_directories(window_tests PRIVATE src)
     target_link_libraries(window_tests PRIVATE Qt6::Test Qt6::Widgets Qt6::DBus Qt6::Concurrent
         Qt6::MultimediaWidgets KF6::Parts KF6::TextEditor KF6::KIOWidgets

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "previewwindow.h"
+#include "filedragbutton.h"
 #include "imageview.h"
 #include "informationpanel.h"
 #include "markdownview.h"
@@ -8,6 +9,7 @@
 #include "preferences.h"
 #include "previewsurface.h"
 #include "providers.h"
+#include "selectionfilmstrip.h"
 #include "supportedtypesdialog.h"
 
 #include <KFileItem>
@@ -17,6 +19,7 @@
 #include <KIO/OpenUrlJob>
 #include <KIO/PreviewJob>
 #include <KIO/StatJob>
+#include <KMessageWidget>
 #include <KParts/PartLoader>
 #include <KParts/ReadOnlyPart>
 #include <KTextEditor/Document>
@@ -27,6 +30,7 @@
 #include <QAudioOutput>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QDir>
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFutureWatcher>
@@ -52,10 +56,41 @@
 
 PreviewWindow::PreviewWindow(bool standalone)
     : content_(new QStackedWidget(this)), info_(new QLabel(this)),
-      information_(new InformationPanel(this)), standalone_(standalone)
+      information_(new InformationPanel(this)), filmstrip_(new SelectionFilmstrip(this)),
+      dragFile_(new FileDragButton(this)), fileMonitor_(new FileMonitor(this)),
+      fileNotice_(new KMessageWidget(this)), standalone_(standalone)
 {
     setWindowIcon(QIcon::fromTheme(QStringLiteral("preview")));
-    setCentralWidget(content_);
+    auto *central = new QWidget(this);
+    auto *layout = new QVBoxLayout(central);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    fileNotice_->setObjectName(QStringLiteral("fileChangeNotice"));
+    fileNotice_->setWordWrap(true);
+    fileNotice_->hide();
+    layout->addWidget(fileNotice_);
+    layout->addWidget(content_, 1);
+    layout->addWidget(filmstrip_);
+    setCentralWidget(central);
+    filmstrip_->hide();
+    connect(fileMonitor_, &FileMonitor::changed, this, &PreviewWindow::refreshCurrent);
+    connect(fileMonitor_, &FileMonitor::monitoringFailed, this,
+            [this](const QString &path)
+            {
+                if (isVisible() && currentUrl_.isLocalFile() &&
+                    QDir::cleanPath(currentUrl_.toLocalFile()) == path)
+                {
+                    fileNotice_->setText(tr("Automatic refresh is unavailable for this location."));
+                    fileNotice_->setMessageType(KMessageWidget::Warning);
+                    fileNotice_->show();
+                }
+            });
+    connect(filmstrip_, &SelectionFilmstrip::fileSelected, this,
+            [this](int row)
+            {
+                if (row >= 0 && row < paths_.size() && row != index_)
+                    navigate(row - index_);
+            });
     resize(960, 720);
     restoreGeometry(QSettings().value(QStringLiteral("window/geometry")).toByteArray());
     auto *toolbar = addToolBar(tr("Preview"));
@@ -82,6 +117,16 @@ PreviewWindow::PreviewWindow(bool standalone)
                    job->start();
                }
            });
+    toolbar->addWidget(dragFile_);
+    animationPlayback_ =
+        action(QStringLiteral("media-playback-pause"), tr("Pause animation"), {},
+               [this]
+               {
+                   if (auto *image = qobject_cast<ImageView *>(content_->currentWidget()))
+                       image->toggleAnimation();
+               });
+    animationPlayback_->setObjectName(QStringLiteral("animationPlayback"));
+    animationPlayback_->setVisible(false);
     action(QStringLiteral("zoom-fit-best"), tr("Fit image"), QKeySequence(Qt::CTRL | Qt::Key_0),
            [this]
            {
@@ -126,11 +171,22 @@ PreviewWindow::PreviewWindow(bool standalone)
                                                                    : currentUrl_.toDisplayString());
                         });
     copyLocation->setObjectName(QStringLiteral("copyLocation"));
+    auto *refresh = menu->addAction(QIcon::fromTheme(QStringLiteral("view-refresh")),
+                                    tr("Refresh Preview"), this,
+                                    [this]
+                                    {
+                                        rememberPosition();
+                                        filmstrip_->invalidateCurrent();
+                                        loadCurrent();
+                                    });
+    refresh->setObjectName(QStringLiteral("refreshPreview"));
+    refresh->setShortcut(QKeySequence::Refresh);
+    addAction(refresh);
     connect(menu, &QMenu::aboutToShow, this,
-            [this, openWith, reveal, copyLocation]
+            [this, openWith, reveal, copyLocation, refresh]
             {
                 const bool available = !paths_.isEmpty() && currentUrl_.isValid();
-                for (auto *item : {openWith, reveal, copyLocation})
+                for (auto *item : {openWith, reveal, copyLocation, refresh})
                     item->setEnabled(available);
             });
     menu->addSeparator();
@@ -162,6 +218,29 @@ PreviewWindow::PreviewWindow(bool standalone)
     informationAction->setShortcut(QKeySequence(Qt::Key_F11));
     informationAction->setObjectName(QStringLiteral("showInformation"));
     toolbar->addAction(informationAction);
+    auto *filmstripAction = menu->addAction(tr("Show Selection Filmstrip"));
+    menu->insertAction(quit, filmstripAction);
+    filmstripAction->setObjectName(QStringLiteral("showFilmstrip"));
+    filmstripAction->setCheckable(true);
+    filmstripAction->setChecked(readPreferences().filmstrip);
+    connect(filmstripAction, &QAction::toggled, this,
+            [this](bool enabled)
+            {
+                QSettings().setValue(QStringLiteral("window/filmstrip"), enabled);
+                filmstrip_->setVisible(isVisible() && enabled && paths_.size() > 1);
+                if (enabled)
+                    filmstrip_->setCurrent(index_);
+            });
+    auto *clearPositions = menu->addAction(tr("Clear Remembered Positions"), this,
+                                           [this]
+                                           {
+                                               this->clearPositions();
+                                               loadCurrent();
+                                           });
+    clearPositions->setObjectName(QStringLiteral("clearPositions"));
+    clearPositions->setStatusTip(
+        tr("Forget positions in this selection and reset the current preview."));
+    menu->insertAction(quit, clearPositions);
     auto *spacer = new QWidget(toolbar);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     toolbar->addWidget(spacer);
@@ -203,6 +282,20 @@ PreviewWindow::PreviewWindow(bool standalone)
 bool PreviewWindow::eventFilter(QObject *watched, QEvent *event)
 {
     auto *widget = qobject_cast<QWidget *>(watched);
+    if (isVisible() && widget && widget->window() == this &&
+        (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress))
+    {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->matches(QKeySequence::Refresh))
+        {
+            // Embedded viewers also register Refresh. Keep one window-level
+            // operation so the active provider and its monitor refresh together.
+            key->accept();
+            if (event->type() == QEvent::KeyPress)
+                findChild<QAction *>(QStringLiteral("refreshPreview"))->trigger();
+            return true;
+        }
+    }
     if (isVisible() && widget && widget->window() == this && qobject_cast<QVideoWidget *>(widget) &&
         event->type() == QEvent::MouseButtonRelease &&
         static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
@@ -241,9 +334,15 @@ void PreviewWindow::ShowPreview(const QStringList &paths, const QString &activat
         HidePreview();
         return;
     }
-    imageStates_.clear();
+    clearPositions();
+    fileMonitor_->clear();
+    fileNotice_->hide();
+    dragFile_->setFile({});
     paths_ = paths;
     index_ = 0;
+    filmstrip_->setPaths(paths);
+    filmstrip_->setVisible(readPreferences().filmstrip && paths.size() > 1);
+    filmstrip_->setCurrent(0);
     if (!activationToken.isEmpty())
     {
         KWindowSystem::setCurrentXdgActivationToken(activationToken);
@@ -257,6 +356,10 @@ void PreviewWindow::ShowPreview(const QStringList &paths, const QString &activat
 void PreviewWindow::clearContent()
 {
     ++generation_;
+    fileMonitor_->clear();
+    animationPlayback_->setVisible(false);
+    dragFile_->setFile({});
+    positionPending_ = false;
     information_->clear();
     workerStop_.request_stop();
     workerStop_ = std::stop_source{};
@@ -286,8 +389,9 @@ void PreviewWindow::HidePreview()
         preferences_->close();
     QSettings().setValue(QStringLiteral("window/geometry"), saveGeometry());
     hide();
+    filmstrip_->clear();
     clearContent();
-    imageStates_.clear();
+    clearPositions();
     if (standalone_)
     {
         qApp->quit();
@@ -304,18 +408,20 @@ void PreviewWindow::showPreferences()
     }
     preferences_ = new PreferencesDialog(this);
     preferences_->setAttribute(Qt::WA_DeleteOnClose);
-    connect(preferences_, &PreferencesDialog::applied, this,
-            [this]
-            {
-                const auto settings = readPreferences();
-                information_->setVisible(settings.information);
-                if (settings.information && isVisible())
-                    information_->setFile(currentUrl_);
-                else
-                    information_->clear();
-                if (player_ && player_->audioOutput())
-                    player_->audioOutput()->setVolume(settings.volume / 100.0f);
-            });
+    connect(
+        preferences_, &PreferencesDialog::applied, this,
+        [this]
+        {
+            const auto settings = readPreferences();
+            findChild<QAction *>(QStringLiteral("showFilmstrip"))->setChecked(settings.filmstrip);
+            information_->setVisible(settings.information);
+            if (settings.information && isVisible())
+                information_->setFile(currentUrl_);
+            else
+                information_->clear();
+            if (player_ && player_->audioOutput())
+                player_->audioOutput()->setVolume(settings.volume / 100.0f);
+        });
     preferences_->show();
 }
 
@@ -348,11 +454,34 @@ void PreviewWindow::navigate(int offset)
 {
     if (paths_.size() > 1)
     {
-        if (auto *image = dynamic_cast<ImageView *>(content_->currentWidget()))
-            imageStates_.insert(currentUrl_, image->viewState());
+        rememberPosition();
         index_ = (index_ + offset + paths_.size()) % paths_.size();
         loadCurrent();
     }
+}
+
+void PreviewWindow::clearPositions()
+{
+    imageStates_.clear();
+    positions_.clear();
+}
+
+void PreviewWindow::rememberPosition()
+{
+    if (positionPending_)
+        return;
+    auto *widget = content_->currentWidget();
+    if (auto *image = dynamic_cast<ImageView *>(widget))
+        imageStates_.insert(currentUrl_, image->viewState());
+    auto &position = positions_[currentUrl_];
+    if (auto *markdown = qobject_cast<MarkdownView *>(widget))
+        position.markdown = markdown->position();
+    else if (auto *text = qobject_cast<KTextEditor::View *>(widget))
+        position.text = textPosition(text);
+    else if (auto *media = dynamic_cast<MediaView *>(widget))
+        position.media = media->position();
+    else if (part_)
+        position.page = documentPage(part_);
 }
 
 void PreviewWindow::message(const QString &text)
@@ -394,12 +523,34 @@ bool PreviewWindow::showPart(const QUrl &url, const QString &mime)
         if (result)
         {
             part_ = result.plugin;
+            if (id == QLatin1String("okularpart"))
+            {
+                const auto saved = positions_.value(url).page.value_or(1U);
+                positionPending_ = true;
+                const auto request = generation_;
+                auto *viewer = part_.data();
+                connect(
+                    viewer, &KParts::ReadOnlyPart::completed, viewer,
+                    [this, viewer, request, saved]
+                    {
+                        QTimer::singleShot(0, viewer,
+                                           [this, viewer, request, saved]
+                                           {
+                                               if (request != generation_)
+                                                   return;
+                                               restoreDocumentPage(viewer, saved);
+                                               positionPending_ = false;
+                                           });
+                    },
+                    Qt::SingleShotConnection);
+            }
             showContent(part_->widget());
             if (part_->openUrl(url))
             {
                 return true;
             }
             delete part_.data();
+            positionPending_ = false;
         }
     }
     return false;
@@ -412,6 +563,8 @@ void PreviewWindow::loadCurrent()
         return;
     }
     clearContent();
+    fileNotice_->hide();
+    filmstrip_->setCurrent(index_);
     const quint64 request = generation_;
     const QString input = paths_.at(index_);
     const QUrl supplied(input);
@@ -452,16 +605,28 @@ void PreviewWindow::loadLocal(const QUrl &url)
         return;
     }
     const QString path = currentUrl_.toLocalFile();
+    if (!fileMonitor_->setPath(path))
+    {
+        fileNotice_->setText(tr("Automatic refresh is unavailable for this location."));
+        fileNotice_->setMessageType(KMessageWidget::Warning);
+        fileNotice_->show();
+    }
     const QFileInfo file(path);
     setWindowTitle(tr("%1 — KGlanceQT").arg(file.fileName()));
     const auto mime = QMimeDatabase().mimeTypeForFile(file);
+    if (file.exists() && file.isReadable())
+        dragFile_->setFile(url, QIcon::fromTheme(mime.iconName()));
     if (information_->isVisible())
         information_->setFile(url);
     info_->setText(tr("%1 / %2 · %3").arg(index_ + 1).arg(paths_.size()).arg(mime.comment()));
     info_->setToolTip(path);
-    if (!file.exists() || !file.isReadable())
+    if (!file.exists())
     {
-        message(tr("This file is missing or cannot be read.\n%1").arg(path));
+        message(tr("This file is missing. It will reload if it reappears.\n%1").arg(path));
+    }
+    else if (!file.isReadable())
+    {
+        message(tr("This file cannot be read. Check its access permissions.\n%1").arg(path));
     }
     else if (file.isDir())
     {
@@ -478,34 +643,58 @@ void PreviewWindow::loadLocal(const QUrl &url)
     {
         message(tr("Loading image…"));
         auto *watcher = new QFutureWatcher<ImageResult>(this);
-        connect(watcher, &QFutureWatcher<ImageResult>::finished, this,
-                [this, watcher, request]
+        connect(
+            watcher, &QFutureWatcher<ImageResult>::finished, this,
+            [this, watcher, request]
+            {
+                const auto result = watcher->result();
+                watcher->deleteLater();
+                if (request != generation_)
                 {
-                    const auto result = watcher->result();
-                    watcher->deleteLater();
-                    if (request != generation_)
+                    return;
+                }
+                if (result.image.isNull())
+                {
+                    message(result.error);
+                }
+                else
+                {
+                    auto *image = new ImageView(result.image, content_);
+                    if (result.animation)
                     {
-                        return;
-                    }
-                    if (result.image.isNull())
-                    {
-                        message(result.error);
-                    }
-                    else
-                    {
-                        auto *image = new ImageView(result.image, content_);
-                        showContent(image);
-                        if (imageStates_.contains(currentUrl_))
+                        auto updatePlayback = [this](bool playing)
                         {
-                            const auto state = imageStates_.value(currentUrl_);
-                            QTimer::singleShot(0, image,
-                                               [image, state] { image->restoreViewState(state); });
-                        }
+                            animationPlayback_->setText(playing ? tr("Pause animation")
+                                                                : tr("Play animation"));
+                            animationPlayback_->setIcon(
+                                QIcon::fromTheme(playing ? QStringLiteral("media-playback-pause")
+                                                         : QStringLiteral("media-playback-start")));
+                        };
+                        connect(image, &ImageView::animationPlayingChanged, animationPlayback_,
+                                updatePlayback);
+                        image->setAnimation(*result.animation, readPreferences().autoplayAnimation);
+                        animationPlayback_->setVisible(true);
                     }
-                });
-        watcher->setFuture(
-            QtConcurrent::run(loadImage, path, workerStop_.get_token(),
-                              QSettings().value(QStringLiteral("limits/imageMP"), 64).toInt()));
+                    showContent(image);
+                    if (!result.notice.isEmpty())
+                        info_->setText(info_->text() + QStringLiteral(" · ") + result.notice);
+                    if (imageStates_.contains(currentUrl_))
+                    {
+                        positionPending_ = true;
+                        const auto state = imageStates_.value(currentUrl_);
+                        QTimer::singleShot(0, image,
+                                           [this, image, state]
+                                           {
+                                               image->restoreViewState(state);
+                                               positionPending_ = false;
+                                           });
+                    }
+                }
+            });
+        const auto settings = readPreferences();
+        watcher->setFuture(QtConcurrent::run(
+            loadImagePreview, path, workerStop_.get_token(), settings.imageMP,
+            AnimationLimits{settings.animationFrames, settings.animationMiB * 1024LL * 1024}));
     }
     else if (mime.name().startsWith(QLatin1String("audio/")) ||
              mime.name().startsWith(QLatin1String("video/")))
@@ -516,7 +705,10 @@ void PreviewWindow::loadLocal(const QUrl &url)
              QStringList{QStringLiteral("md"), QStringLiteral("markdown"), QStringLiteral("mkd")}
                  .contains(file.suffix().toLower()))
     {
-        showContent(new MarkdownView(path, content_));
+        auto *view = new MarkdownView(path, content_);
+        if (const auto saved = positions_.value(url).markdown)
+            view->restorePosition(*saved);
+        showContent(view);
     }
     else if (mime.inherits(QStringLiteral("text/plain")) ||
              mime.inherits(QStringLiteral("application/json")))
@@ -530,6 +722,7 @@ void PreviewWindow::loadLocal(const QUrl &url)
         }
         auto *document = KTextEditor::Editor::instance()->createDocument(this);
         document->setReadWrite(false);
+        document->setModifiedOnDiskWarning(false);
         auto *view = document->createView(content_);
         view->setStatusBarEnabled(false);
         part_ = document;
@@ -537,6 +730,16 @@ void PreviewWindow::loadLocal(const QUrl &url)
         if (!document->openUrl(currentUrl_))
         {
             message(tr("Could not open this text file."));
+        }
+        else if (const auto saved = positions_.value(url).text)
+        {
+            positionPending_ = true;
+            QTimer::singleShot(0, view,
+                               [this, view, saved]
+                               {
+                                   restoreTextPosition(view, *saved);
+                                   positionPending_ = false;
+                               });
         }
     }
     else if (isArchive(mime.name()))
@@ -582,6 +785,48 @@ void PreviewWindow::loadLocal(const QUrl &url)
     }
 }
 
+void PreviewWindow::refreshCurrent(const QString &path, FileMonitor::Change change)
+{
+    if (!isVisible() || !currentUrl_.isLocalFile() ||
+        QDir::cleanPath(currentUrl_.toLocalFile()) != path)
+        return;
+    const auto url = currentUrl_;
+    filmstrip_->invalidateCurrent();
+    // QFileSystemModel already updates live directory listings without losing
+    // expansion and selection. Only reload folders when their identity changes.
+    if (change == FileMonitor::Change::Modified && QFileInfo(path).isDir())
+    {
+        if (information_->isVisible())
+            information_->setFile(url);
+        return;
+    }
+    rememberPosition();
+    clearContent();
+    fileNotice_->setMessageType(KMessageWidget::Information);
+    switch (change)
+    {
+    case FileMonitor::Change::Modified:
+        fileNotice_->setText(tr("File changed on disk. Preview refreshed."));
+        break;
+    case FileMonitor::Change::Removed:
+        fileNotice_->setText(tr("File was removed or moved. Waiting for it to reappear."));
+        fileNotice_->setMessageType(KMessageWidget::Warning);
+        break;
+    case FileMonitor::Change::Replaced:
+        fileNotice_->setText(tr("File was replaced on disk. Preview refreshed."));
+        break;
+    case FileMonitor::Change::Restored:
+        fileNotice_->setText(tr("File is available again. Preview refreshed."));
+        break;
+    case FileMonitor::Change::Unavailable:
+        fileNotice_->setText(tr("File is no longer accessible. Check its access permissions."));
+        fileNotice_->setMessageType(KMessageWidget::Warning);
+        break;
+    }
+    fileNotice_->show();
+    loadLocal(url);
+}
+
 void PreviewWindow::showFallback(const QUrl &url, const QString &mime)
 {
     message(tr("No interactive viewer for %1. Looking for a KDE thumbnail…").arg(mime));
@@ -611,6 +856,8 @@ void PreviewWindow::showFallback(const QUrl &url, const QString &mime)
 void PreviewWindow::showMedia(const QUrl &url, const QString &mime)
 {
     auto *view = new MediaView(url, QMimeDatabase().mimeTypeForName(mime), content_);
+    if (const auto saved = positions_.value(url).media)
+        view->restorePosition(*saved);
     player_ = view->player();
     connect(player_, &QMediaPlayer::errorOccurred, this,
             [this](QMediaPlayer::Error, const QString &error) { info_->setText(error); });

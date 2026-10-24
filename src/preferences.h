@@ -9,11 +9,15 @@ struct PreviewPreferences
 {
     bool autoplayAudio = true;
     bool autoplayVideo = true;
+    bool autoplayAnimation = true;
     bool markdownSource = false;
     bool information = false;
+    bool filmstrip = false;
     int volume = 100;
     int textMiB = 16;
     int imageMP = 64;
+    int animationFrames = 256;
+    int animationMiB = 64;
     int archiveEntries = 10000;
 };
 
