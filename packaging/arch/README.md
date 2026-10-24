@@ -50,10 +50,13 @@ The distribution package enables `KGLANCEQT_WITH_SQLITE` and declares
 `sqlite>=3.41`; direct CMake builds keep it optional. CI checks both feature
 settings against `archlinux:base-devel` and the distribution's
 [`cachyos/cachyos:latest`](https://hub.docker.com/r/cachyos/cachyos) image on pushes,
-PRs, weekly and manual runs. Package builds run as an unprivileged builder and
-retain packages, source tarballs and recipes as workflow artifacts. Current
-rolling dependency versions are resolved on each run. CI itself must run on
-GitHub to validate container-specific behaviour.
+PRs, weekly and manual runs. Package builds run as an unprivileged builder with a
+private home/runtime on the workspace filesystem. KIO selects home Trash by the
+home filesystem, so this keeps Trash/Undo tests on the same mount without requiring
+write access to the
+container mount root. The builds retain packages, source tarballs and recipes as
+workflow artifacts. Current rolling dependency versions are resolved on each run.
+CI itself must run on GitHub to validate container-specific behaviour.
 
 Release publication remains deliberate: review the built artifacts and tests,
 then create the authorized immutable source tag and attach the verified source
