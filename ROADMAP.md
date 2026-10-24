@@ -31,18 +31,18 @@ preview defaults, limits, and Dolphin shortcut configuration.
 
 ### Comparison and file triage
 
-- [ ] Compare two images side by side, with optional linked zoom/pan, dimensions,
+- [x] Compare two images side by side, with optional linked zoom/pan, dimensions,
   and metadata differences. Evaluate text comparison as a later extension.
-- [ ] Move the current file to Trash, advance through the selection, and offer
+- [x] Move the current file to Trash, advance through the selection, and offer
   Undo using KDE file operations. Reflect failures and restore selection correctly.
-- [ ] Add explicit editing of KDE file ratings, tags, and comments in the sidebar,
+- [x] Add explicit editing of KDE file ratings, tags, and comments in the sidebar,
   sharing metadata with Dolphin and reporting unsupported filesystems/write errors.
 
 ### More locations and formats
 
-- [ ] Preview CSV/TSV as searchable, sortable tables with selectable cells, sensible
+- [x] Preview CSV/TSV as searchable, sortable tables with selectable cells, sensible
   column sizing, bounded parsing, and visible row/column truncation limits.
-- [ ] Preview remote KIO URLs such as SFTP/SMB using bounded, cancellable temporary
+- [x] Preview remote KIO URLs such as SFTP/SMB using bounded, cancellable temporary
   transfers with clear progress, cleanup, and no stale results after navigation.
 - [ ] Evaluate native office/spreadsheet, SQLite table, and reading-position support;
   keep specialized features optional when their dependency cost is high.

@@ -42,10 +42,13 @@ class ImageView final : public QGraphicsView
   Q_SIGNALS:
     void animationPlayingChanged(bool playing);
     void frameChanged(int frame);
+    void viewChanged();
 
   protected:
     void wheelEvent(QWheelEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
   private:
     void advanceFrame();

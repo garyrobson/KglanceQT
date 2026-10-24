@@ -60,6 +60,7 @@ implemented**. A supported desktop keyboard integration remains on the roadmap.
 | Content | Native component |
 | --- | --- |
 | Text / source code | Read-only KTextEditor, including highlighting, search, selection and copy |
+| CSV / TSV | Searchable, sortable, selectable read-only tables with bounded parsing |
 | Markdown | Qt rendered preview with tables, task lists, local images, heading links, and a KTextEditor source view |
 | Images and SVG | QImageReader and installed Qt/KDE image plugins; bounded animation playback, wheel zoom, drag to pan, Ctrl+0 to fit |
 | PDF and supported documents | Installed Okular read-only KPart |
@@ -145,10 +146,43 @@ details and Dolphin's read-only metadata widget. Available properties depend on
 the file and installed KDE extractors, including image dimensions, camera data,
 media details, and document properties. Detailed extraction is limited to regular
 files up to 256 MiB; folders and larger files retain basic file information.
+Choose **Edit Ratings, Tags and Comment…** for an explicit metadata form. Ratings
+(including half stars), one tag per line, and comments use KDE user metadata,
+shared with Dolphin. Commas are reserved by KDE’s tag storage; the editor rejects
+them inside a tag. Unsupported filesystems and save errors appear in the form.
+Each editor stays bound to its displayed file, survives sidebar refresh, and
+refuses saving if that file was replaced. A partially failed save is reported;
+successful fields may already have been written.
+
+Choose **Compare Images…** in the application menu to open two local images side
+by side. Pick from the selection or choose other images. **Link zoom and pan**
+synchronizes magnification and the relative viewing centre; **Fit both images**
+resets the views. The metadata table highlights differences in dimensions,
+format, size, colour information and available embedded text. Each pane decodes
+in a worker, watches for changes and uses at most 32 megapixels (or the lower
+configured limit). Animated comparisons show the first frame.
+
+**Move to Trash** in the application menu uses KDE Trash operations and advances
+to the next selected file. **Undo Move to Trash** (Ctrl+Z, also offered in the
+operation banner) restores the file and its original selection entries. An
+occupied original location produces an error rather than overwriting its new
+contents. Restoring after a different selection opens restores the file without
+inserting it into the new selection. This application never falls back to
+permanent deletion.
+
+CSV and TSV files open as read-only tables. Search filters all columns, column
+numbers sort numerically where possible, and selected cells copy as TSV with
+Ctrl+C (up to 4 Mi characters per copy). All rows, including a possible header row,
+are data. Parsing handles
+quoted delimiters, doubled quotes and multiline fields in a worker. Limits are
+16 MiB input (or the lower text limit), 10,000 rows, 256 columns, 100,000 cells and
+64 Ki characters per field. A visible notice identifies partial results; incomplete final rows are
+omitted at the input limit. Column widths sample at most 100 rows.
 
 Open **Configure KGlanceQT…** from the toolbar (Ctrl+Shift+,) for audio/video/animation
 autoplay, default volume, Markdown's initial view, sidebar visibility, and text,
-image, animation, and archive limits. Preview defaults apply to the next file; volume,
+image, animation, table input, remote download and archive limits. Preview
+defaults apply to the next file; volume,
 sidebar, and filmstrip visibility update immediately. The Dolphin shortcut page has
 a separate **Apply shortcut to Dolphin** button, preserves conflicting assignments, and
 backs up existing configuration. Normal preference changes do not modify Dolphin.
@@ -168,7 +202,7 @@ with object `/org/kglanceqt/Preview`. Per-user window settings live in
 
 Required: a C++20 compiler, CMake, Ninja, Qt 6.6+ Widgets, XML, DBus, Concurrent
 and Multimedia, plus KF6 Parts, TextEditor, KIO, Archive, WindowSystem,
-WidgetsAddons and BalooWidgets (`baloo-widgets`). Tests
+WidgetsAddons, BalooWidgets (`baloo-widgets`) and FileMetaData 6.2+ (`kfilemetadata`). Tests
 also use Qt Test, Python, DBus tools and Okular. Python is not an application
 runtime dependency. Image format plugins and thumbnails are optional enhancements.
 
@@ -186,7 +220,7 @@ create Unix sockets; it does not address the user's live preview process.
 
 Animations exceeding the configured limits show their first frame with an
 explanation. Office formats may have only a thumbnail.
-Spreadsheet/SQLite tables, persistent reading history, trash/undo,
+Office spreadsheet/SQLite tables, persistent reading history,
 custom shell actions and 3D previews are not implemented. This is a replacement
 project, not a claim of complete feature parity with the old application. See [ROADMAP.md](ROADMAP.md).
 
@@ -205,4 +239,11 @@ Worker jobs use two threads
 and request generations prevent stale results. Archive traversal checks
 cancellation, but an image decode already running cannot be interrupted. KParts
 load in-process; their responsiveness and resource use still require benchmarks.
-Remote network URLs are not downloaded by the application.
+Remote previews download at most 128 MiB into private temporary storage, with a
+60-second transfer deadline. Navigation, hiding and cancellation stop transfers;
+temporary files are removed after viewers release them. Installed KIO workers
+provide SFTP, SMB and other protocols; failures and authentication requirements
+come from KIO. Remote previews do not monitor the server for changes; use Refresh.
+Open, Open With and Copy Location retain the original URL. Trash, image comparison
+and metadata editing currently require local files. Embedded Markdown remote images
+remain disabled.

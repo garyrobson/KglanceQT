@@ -8,6 +8,7 @@
 
 #include <QHash>
 #include <QMainWindow>
+#include <QMap>
 #include <QPointer>
 #include <QStringList>
 #include <QUrl>
@@ -24,6 +25,10 @@ class SelectionFilmstrip;
 class FileDragButton;
 class QAction;
 class KMessageWidget;
+class ImageComparison;
+class FileTriage;
+class QMenu;
+class RemotePreview;
 namespace KParts
 {
 class ReadOnlyPart;
@@ -46,6 +51,7 @@ class PreviewWindow final : public QMainWindow
   private:
     void loadCurrent();
     void loadLocal(const QUrl &url);
+    void loadRemote(const QUrl &url);
     void refreshCurrent(const QString &path, FileMonitor::Change change);
     void clearContent();
     void navigate(int offset);
@@ -59,6 +65,13 @@ class PreviewWindow final : public QMainWindow
     void togglePlayback();
     void showPreferences();
     void showSupportedTypes();
+    void showComparison();
+    void initializeTriage(QMenu *menu);
+    void updateTriageActions();
+    void trashCurrent();
+    void selectionTrashed(const QUrl &url, quint64 command);
+    void selectionRestored(const QUrl &url, quint64 command);
+    void updateSelectionView();
     QStackedWidget *content_;
     QLabel *info_;
     InformationPanel *information_;
@@ -67,6 +80,22 @@ class PreviewWindow final : public QMainWindow
     QAction *animationPlayback_;
     FileMonitor *fileMonitor_;
     KMessageWidget *fileNotice_;
+    QAction *compareImages_;
+    QPointer<ImageComparison> comparison_;
+    QPointer<RemotePreview> remote_;
+    FileTriage *triage_;
+    KMessageWidget *operationNotice_;
+    QAction *trashAction_;
+    QAction *undoTrashAction_;
+    struct RemovedSelection
+    {
+        quint64 session = 0;
+        QList<QPair<int, QString>> items;
+    };
+    QMap<quint64, RemovedSelection> removedSelections_;
+    quint64 selectionSession_ = 0;
+    quint64 trashSession_ = 0;
+    QString trashInput_;
     QStringList paths_;
     QUrl currentUrl_;
     QHash<QUrl, ImageViewState> imageStates_;

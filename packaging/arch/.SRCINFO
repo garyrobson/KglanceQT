@@ -23,11 +23,12 @@ pkgbase = kglanceqt
 	depends = kwindowsystem
 	depends = baloo-widgets
 	depends = kwidgetsaddons
+	depends = kfilemetadata>=6.2
 	optdepends = okular: PDF and supported document previews
 	optdepends = qt6-svg: SVG previews
 	optdepends = qt6-imageformats: additional image formats
 	optdepends = kimageformats: KDE image format plugins
-	optdepends = kio-extras: additional thumbnail providers
+	optdepends = kio-extras: additional KIO protocols and thumbnail providers
 	optdepends = kdegraphics-thumbnailers: document thumbnails
 	optdepends = plasma-workspace: desktop:/ URLs and font viewer component
 	conflicts = kglance

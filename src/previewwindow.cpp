@@ -2,6 +2,8 @@
 
 #include "previewwindow.h"
 #include "filedragbutton.h"
+#include "filetriage.h"
+#include "imagecomparison.h"
 #include "imageview.h"
 #include "informationpanel.h"
 #include "markdownview.h"
@@ -9,8 +11,12 @@
 #include "preferences.h"
 #include "previewsurface.h"
 #include "providers.h"
+#include "remotepreview.h"
 #include "selectionfilmstrip.h"
 #include "supportedtypesdialog.h"
+#include "tableview.h"
+#include <QProgressBar>
+#include <QPushButton>
 
 #include <KFileItem>
 #include <KIO/ApplicationLauncherJob>
@@ -58,7 +64,8 @@ PreviewWindow::PreviewWindow(bool standalone)
     : content_(new QStackedWidget(this)), info_(new QLabel(this)),
       information_(new InformationPanel(this)), filmstrip_(new SelectionFilmstrip(this)),
       dragFile_(new FileDragButton(this)), fileMonitor_(new FileMonitor(this)),
-      fileNotice_(new KMessageWidget(this)), standalone_(standalone)
+      fileNotice_(new KMessageWidget(this)), triage_(new FileTriage(this)),
+      operationNotice_(new KMessageWidget(this)), standalone_(standalone)
 {
     setWindowIcon(QIcon::fromTheme(QStringLiteral("preview")));
     auto *central = new QWidget(this);
@@ -69,6 +76,11 @@ PreviewWindow::PreviewWindow(bool standalone)
     fileNotice_->setWordWrap(true);
     fileNotice_->hide();
     layout->addWidget(fileNotice_);
+    operationNotice_->setObjectName(QStringLiteral("fileOperationNotice"));
+    operationNotice_->setTextFormat(Qt::PlainText);
+    operationNotice_->setWordWrap(true);
+    operationNotice_->hide();
+    layout->addWidget(operationNotice_);
     layout->addWidget(content_, 1);
     layout->addWidget(filmstrip_);
     setCentralWidget(central);
@@ -140,6 +152,11 @@ PreviewWindow::PreviewWindow(bool standalone)
            [this] { HidePreview(); });
     auto *menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("applicationMenu"));
+    compareImages_ = menu->addAction(QIcon::fromTheme(QStringLiteral("view-split-left-right")),
+                                     tr("Compare Images…"), this, &PreviewWindow::showComparison);
+    compareImages_->setObjectName(QStringLiteral("compareImages"));
+    compareImages_->setEnabled(false);
+    initializeTriage(menu);
     auto *openWith =
         menu->addAction(QIcon::fromTheme(QStringLiteral("document-open")), tr("Open With…"), this,
                         [this]
@@ -335,6 +352,9 @@ void PreviewWindow::ShowPreview(const QStringList &paths, const QString &activat
         return;
     }
     clearPositions();
+    ++selectionSession_;
+    if (comparison_)
+        comparison_->close();
     fileMonitor_->clear();
     fileNotice_->hide();
     dragFile_->setFile({});
@@ -356,6 +376,8 @@ void PreviewWindow::ShowPreview(const QStringList &paths, const QString &activat
 void PreviewWindow::clearContent()
 {
     ++generation_;
+    trashAction_->setEnabled(false);
+    compareImages_->setEnabled(false);
     fileMonitor_->clear();
     animationPlayback_->setVisible(false);
     dragFile_->setFile({});
@@ -379,10 +401,15 @@ void PreviewWindow::clearContent()
     {
         delete content_->widget(0);
     }
+    delete remote_.data();
 }
 
 void PreviewWindow::HidePreview()
 {
+    information_->closeEditor();
+    ++selectionSession_;
+    if (comparison_)
+        comparison_->close();
     if (supportedTypes_)
         supportedTypes_->close();
     if (preferences_)
@@ -437,6 +464,18 @@ void PreviewWindow::showSupportedTypes()
     supportedTypes_->activateWindow();
 }
 
+void PreviewWindow::showComparison()
+{
+    if (!comparison_)
+    {
+        comparison_ = new ImageComparison(paths_, index_, this);
+        comparison_->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    comparison_->show();
+    comparison_->raise();
+    comparison_->activateWindow();
+}
+
 bool PreviewWindow::IsVisible() const { return isVisible(); }
 void PreviewWindow::Quit()
 {
@@ -454,6 +493,8 @@ void PreviewWindow::navigate(int offset)
 {
     if (paths_.size() > 1)
     {
+        if (comparison_)
+            comparison_->close();
         rememberPosition();
         index_ = (index_ + offset + paths_.size()) % paths_.size();
         loadCurrent();
@@ -525,7 +566,7 @@ bool PreviewWindow::showPart(const QUrl &url, const QString &mime)
             part_ = result.plugin;
             if (id == QLatin1String("okularpart"))
             {
-                const auto saved = positions_.value(url).page.value_or(1U);
+                const auto saved = positions_.value(currentUrl_).page.value_or(1U);
                 positionPending_ = true;
                 const auto request = generation_;
                 auto *viewer = part_.data();
@@ -569,6 +610,7 @@ void PreviewWindow::loadCurrent()
     const QString input = paths_.at(index_);
     const QUrl supplied(input);
     currentUrl_ = supplied.scheme().isEmpty() ? QUrl::fromLocalFile(input) : supplied;
+    updateTriageActions();
     if (currentUrl_.scheme() == QLatin1String("desktop"))
     {
         message(tr("Resolving desktop file…"));
@@ -597,29 +639,33 @@ void PreviewWindow::loadCurrent()
 
 void PreviewWindow::loadLocal(const QUrl &url)
 {
-    currentUrl_ = url;
+    if (!remote_)
+        currentUrl_ = url;
     const auto request = generation_;
-    if (!currentUrl_.isLocalFile())
+    if (!url.isLocalFile())
     {
-        message(tr("This location cannot be previewed locally."));
+        loadRemote(url);
         return;
     }
-    const QString path = currentUrl_.toLocalFile();
-    if (!fileMonitor_->setPath(path))
+    const QString path = url.toLocalFile();
+    if (!remote_ && !fileMonitor_->setPath(path))
     {
         fileNotice_->setText(tr("Automatic refresh is unavailable for this location."));
         fileNotice_->setMessageType(KMessageWidget::Warning);
         fileNotice_->show();
     }
     const QFileInfo file(path);
+    updateTriageActions();
     setWindowTitle(tr("%1 — KGlanceQT").arg(file.fileName()));
     const auto mime = QMimeDatabase().mimeTypeForFile(file);
-    if (file.exists() && file.isReadable())
+    compareImages_->setEnabled(!remote_ && file.isFile() && file.isReadable() &&
+                               mime.name().startsWith(QLatin1String("image/")));
+    if (!remote_ && file.exists() && file.isReadable())
         dragFile_->setFile(url, QIcon::fromTheme(mime.iconName()));
     if (information_->isVisible())
-        information_->setFile(url);
+        information_->setFile(currentUrl_);
     info_->setText(tr("%1 / %2 · %3").arg(index_ + 1).arg(paths_.size()).arg(mime.comment()));
-    info_->setToolTip(path);
+    info_->setToolTip(remote_ ? currentUrl_.toDisplayString() : path);
     if (!file.exists())
     {
         message(tr("This file is missing. It will reload if it reappears.\n%1").arg(path));
@@ -699,14 +745,25 @@ void PreviewWindow::loadLocal(const QUrl &url)
     else if (mime.name().startsWith(QLatin1String("audio/")) ||
              mime.name().startsWith(QLatin1String("video/")))
     {
-        showMedia(currentUrl_, mime.name());
+        showMedia(url, mime.name());
+    }
+    else if (mime.inherits(QStringLiteral("text/csv")) ||
+             QStringList{QStringLiteral("csv"), QStringLiteral("tsv")}.contains(
+                 file.suffix().toLower()))
+    {
+        showContent(
+            new TableView(path,
+                          file.suffix().compare(QStringLiteral("tsv"), Qt::CaseInsensitive) == 0
+                              ? QLatin1Char('\t')
+                              : QLatin1Char(','),
+                          content_));
     }
     else if (mime.inherits(QStringLiteral("text/markdown")) ||
              QStringList{QStringLiteral("md"), QStringLiteral("markdown"), QStringLiteral("mkd")}
                  .contains(file.suffix().toLower()))
     {
         auto *view = new MarkdownView(path, content_);
-        if (const auto saved = positions_.value(url).markdown)
+        if (const auto saved = positions_.value(currentUrl_).markdown)
             view->restorePosition(*saved);
         showContent(view);
     }
@@ -727,11 +784,11 @@ void PreviewWindow::loadLocal(const QUrl &url)
         view->setStatusBarEnabled(false);
         part_ = document;
         showContent(view);
-        if (!document->openUrl(currentUrl_))
+        if (!document->openUrl(url))
         {
             message(tr("Could not open this text file."));
         }
-        else if (const auto saved = positions_.value(url).text)
+        else if (const auto saved = positions_.value(currentUrl_).text)
         {
             positionPending_ = true;
             QTimer::singleShot(0, view,
@@ -779,9 +836,9 @@ void PreviewWindow::loadLocal(const QUrl &url)
             listArchive, path, mime.name(), workerStop_.get_token(),
             QSettings().value(QStringLiteral("limits/archiveEntries"), 10000).toInt()));
     }
-    else if (!showPart(currentUrl_, mime.name()))
+    else if (!showPart(url, mime.name()))
     {
-        showFallback(currentUrl_, mime.name());
+        showFallback(url, mime.name());
     }
 }
 
@@ -797,7 +854,7 @@ void PreviewWindow::refreshCurrent(const QString &path, FileMonitor::Change chan
     if (change == FileMonitor::Change::Modified && QFileInfo(path).isDir())
     {
         if (information_->isVisible())
-            information_->setFile(url);
+            information_->setFile(currentUrl_);
         return;
     }
     rememberPosition();
@@ -856,7 +913,7 @@ void PreviewWindow::showFallback(const QUrl &url, const QString &mime)
 void PreviewWindow::showMedia(const QUrl &url, const QString &mime)
 {
     auto *view = new MediaView(url, QMimeDatabase().mimeTypeForName(mime), content_);
-    if (const auto saved = positions_.value(url).media)
+    if (const auto saved = positions_.value(currentUrl_).media)
         view->restorePosition(*saved);
     player_ = view->player();
     connect(player_, &QMediaPlayer::errorOccurred, this,
@@ -878,4 +935,59 @@ void PreviewWindow::togglePlayback()
     {
         player_->play();
     }
+}
+
+void PreviewWindow::loadRemote(const QUrl &url)
+{
+    auto *download = new RemotePreview(this, readPreferences().remoteMiB * 1024LL * 1024);
+    remote_ = download;
+    const auto request = generation_;
+    const int limit = readPreferences().remoteMiB;
+    setWindowTitle(tr("%1 — KGlanceQT").arg(url.fileName()));
+    info_->setText(tr("%1 / %2 · Remote preview").arg(index_ + 1).arg(paths_.size()));
+    info_->setToolTip(url.toDisplayString());
+    if (information_->isVisible())
+        information_->setFile(url);
+    auto *body = new QWidget(content_);
+    auto *layout = new QVBoxLayout(body);
+    auto *location = new QLabel(tr("Downloading %1").arg(url.toDisplayString()), body);
+    location->setTextFormat(Qt::PlainText);
+    location->setWordWrap(true);
+    layout->addWidget(location);
+    auto *progress = new QProgressBar(body);
+    progress->setRange(0, 0);
+    layout->addWidget(progress);
+    auto *status = new QLabel(tr("Connecting…"), body);
+    status->setTextFormat(Qt::PlainText);
+    layout->addWidget(status);
+    auto *cancel = new QPushButton(tr("Cancel transfer"), body);
+    cancel->setObjectName(QStringLiteral("cancelRemoteTransfer"));
+    layout->addWidget(cancel);
+    connect(cancel, &QPushButton::clicked, download, &RemotePreview::cancel);
+    connect(
+        download, &RemotePreview::progress, body,
+        [progress, status, limit](qint64 received, qint64 total)
+        {
+            if (total > 0)
+            {
+                progress->setRange(0, 100);
+                progress->setValue(int(received * 100 / total));
+            }
+            status->setText(
+                QObject::tr("%1 KiB received (maximum %2 MiB)").arg(received / 1024).arg(limit));
+        });
+    connect(download, &RemotePreview::failed, this,
+            [this, request](const QString &error)
+            {
+                if (request == generation_)
+                    message(error);
+            });
+    connect(download, &RemotePreview::ready, this,
+            [this, request](const QUrl &local)
+            {
+                if (request == generation_)
+                    loadLocal(local);
+            });
+    showContent(body);
+    download->start(url);
 }

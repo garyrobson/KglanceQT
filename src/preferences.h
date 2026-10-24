@@ -16,6 +16,7 @@ struct PreviewPreferences
     int volume = 100;
     int textMiB = 16;
     int imageMP = 64;
+    int remoteMiB = 128;
     int animationFrames = 256;
     int animationMiB = 64;
     int archiveEntries = 10000;

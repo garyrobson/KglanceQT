@@ -8,14 +8,14 @@ arch=('x86_64')
 url='https://github.com/garyrobson/KglanceQT'
 license=('AGPL-3.0-only')
 depends=('glibc' 'gcc-libs' 'qt6-base>=6.6' 'qt6-multimedia'
-         'kparts' 'ktexteditor' 'kio' 'karchive' 'kwindowsystem' 'baloo-widgets' 'kwidgetsaddons')
+         'kparts' 'ktexteditor' 'kio' 'karchive' 'kwindowsystem' 'baloo-widgets' 'kwidgetsaddons' 'kfilemetadata>=6.2')
 makedepends=('cmake' 'ninja' 'python')
 checkdepends=('dbus' 'glib2' 'qt6-tools' 'okular')
 optdepends=('okular: PDF and supported document previews'
             'qt6-svg: SVG previews'
             'qt6-imageformats: additional image formats'
             'kimageformats: KDE image format plugins'
-            'kio-extras: additional thumbnail providers'
+            'kio-extras: additional KIO protocols and thumbnail providers'
             'kdegraphics-thumbnailers: document thumbnails'
             'plasma-workspace: desktop:/ URLs and font viewer component')
 conflicts=('kglance' 'kglance-git')

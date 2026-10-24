@@ -44,6 +44,10 @@ SupportedTypesDialog::SupportedTypesDialog(QWidget *parent) : QDialog(parent)
     section(tr("Text and source code"),
             tr("Plain text, logs, JSON, XML, and source files such as C++, Python, and shell "
                "scripts. Files recognized as text open with syntax highlighting where available."));
+    section(tr("CSV and TSV"),
+            tr("Searchable, sortable read-only tables with selectable cells and TSV copy. All rows "
+               "are data. Up to 16 MiB, 10,000 rows, 256 columns and 100,000 cells; partial "
+               "results are clearly marked."));
     section(tr("Markdown"),
             tr(".md, .markdown, and .mkd files, and files recognized as Markdown. Rendered preview "
                "and source views, with tables and local images. Large documents open as source."));
@@ -93,7 +97,9 @@ SupportedTypesDialog::SupportedTypesDialog(QWidget *parent) : QDialog(parent)
                "installed KDE thumbnailer. If no preview is available, use Open in application "
                "or Open With…"));
     section(tr("Preview limits"),
-            tr("Only local files are currently previewed. Text, image, and archive limits can be "
+            tr("Local files and remote KIO URLs are previewed. Remote files use cancellable "
+               "temporary downloads of up to 128 MiB with a 60-second transfer deadline. Installed "
+               "KIO workers determine available protocols. Text, image, and archive limits can be "
                "adjusted in Configure KGlanceQT…. Remote Markdown images are not downloaded."));
     details->setHtml(html);
     layout->addWidget(details);

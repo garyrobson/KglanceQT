@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "informationpanel.h"
+#include "metadataeditor.h"
+#include <QPushButton>
 
 #include <KFileItem>
 #include <KIO/OpenUrlJob>
@@ -38,7 +40,20 @@ void InformationPanel::setFile(const QUrl &url)
 {
     clear();
     if (!url.isLocalFile())
+    {
+        auto *layout = new QVBoxLayout(scroll_->widget());
+        auto *location = new QLabel(url.toDisplayString(), scroll_->widget());
+        location->setTextFormat(Qt::PlainText);
+        location->setWordWrap(true);
+        location->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(location);
+        auto *notice = new QLabel(tr("Remote preview. Metadata editing requires a local file."),
+                                  scroll_->widget());
+        notice->setWordWrap(true);
+        layout->addWidget(notice);
+        layout->addStretch();
         return;
+    }
     const QFileInfo file(url.toLocalFile());
     const auto mime = QMimeDatabase().mimeTypeForFile(file);
     auto *body = scroll_->widget();
@@ -106,5 +121,26 @@ void InformationPanel::setFile(const QUrl &url)
         notice->setWordWrap(true);
         layout->addWidget(notice);
     }
+    auto *edit = new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")),
+                                 tr("Edit Ratings, Tags and Comment…"), body);
+    edit->setObjectName(QStringLiteral("editUserMetadata"));
+    layout->addWidget(edit);
+    connect(edit, &QPushButton::clicked, this,
+            [this, url]
+            {
+                if (editor_)
+                {
+                    editor_->raise();
+                    return;
+                }
+                editor_ = new MetadataEditor(url, window());
+                editor_->show();
+            });
     layout->addStretch();
+}
+
+void InformationPanel::closeEditor()
+{
+    if (editor_)
+        editor_->close();
 }

@@ -3,6 +3,9 @@
 #include "imageview.h"
 
 #include <QGraphicsPixmapItem>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QScrollBar>
 #include <QTimer>
 #include <QWheelEvent>
 
@@ -16,6 +19,13 @@ ImageView::ImageView(const QImage &image, QWidget *parent)
     setFrameShape(QFrame::NoFrame);
     frameTimer_.setSingleShot(true);
     connect(&frameTimer_, &QTimer::timeout, this, &ImageView::advanceFrame);
+    for (auto *bar : {horizontalScrollBar(), verticalScrollBar()})
+        connect(bar, &QScrollBar::sliderMoved, this,
+                [this]
+                {
+                    fitted_ = false;
+                    Q_EMIT viewChanged();
+                });
 }
 
 void ImageView::setAnimation(ImageAnimation animation, bool autoplay)
@@ -104,6 +114,7 @@ void ImageView::fit()
 {
     fitted_ = true;
     fitInView(scene_.itemsBoundingRect(), Qt::KeepAspectRatio);
+    Q_EMIT viewChanged();
 }
 
 ImageViewState ImageView::viewState() const
@@ -144,6 +155,30 @@ void ImageView::restoreViewState(const ImageViewState &state)
                                    centerOn(state.center);
                            });
     }
+    Q_EMIT viewChanged();
+}
+
+void ImageView::mouseMoveEvent(QMouseEvent *event)
+{
+    const QPoint before(horizontalScrollBar()->value(), verticalScrollBar()->value());
+    QGraphicsView::mouseMoveEvent(event);
+    if (event->buttons() & Qt::LeftButton &&
+        before != QPoint(horizontalScrollBar()->value(), verticalScrollBar()->value()))
+    {
+        fitted_ = false;
+        Q_EMIT viewChanged();
+    }
+}
+
+void ImageView::keyPressEvent(QKeyEvent *event)
+{
+    const QPoint before(horizontalScrollBar()->value(), verticalScrollBar()->value());
+    QGraphicsView::keyPressEvent(event);
+    if (before != QPoint(horizontalScrollBar()->value(), verticalScrollBar()->value()))
+    {
+        fitted_ = false;
+        Q_EMIT viewChanged();
+    }
 }
 
 void ImageView::resizeEvent(QResizeEvent *event)
@@ -163,6 +198,7 @@ void ImageView::wheelEvent(QWheelEvent *event)
     if (nextScale > 0.01 && nextScale < 64.0)
     {
         scale(factor, factor);
+        Q_EMIT viewChanged();
     }
     event->accept();
 }

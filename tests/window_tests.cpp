@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 #include "filedragbutton.h"
+#include "imagecomparison.h"
 #include "informationpanel.h"
 #include "markdownview.h"
+#include "metadataeditor.h"
 #include "preferences.h"
 #include "previewwindow.h"
 #include "providers.h"
+#include "remotepreview.h"
 #include "selectionfilmstrip.h"
+#include "tableview.h"
+#include <KFileMetaData/UserMetaData>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QTcpServer>
+#include <QTcpSocket>
 
 #include <KActionCollection>
 #include <KIO/PreviewJob>
@@ -44,6 +53,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTabBar>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTextBrowser>
 #include <QTextTable>
@@ -793,6 +803,370 @@ class WindowTests final : public QObject
         QTRY_VERIFY(!image->isPlaying());
         QCOMPARE(image->currentFrame(), frame);
         window.HidePreview();
+    }
+
+    void boundedTablesAndCellInteraction()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto path = directory.filePath(QStringLiteral("data.csv"));
+        QVERIFY(replacePreviewFile(path, "name,value\r\n\"multi\nline\",10\r\n\"a\"\"b\",2\r\n"));
+        auto parsed = readTable(path, QLatin1Char(','));
+        QVERIFY(parsed.error.isEmpty());
+        QCOMPARE(parsed.rows.size(), 3);
+        QCOMPARE(parsed.rows[1][0], QStringLiteral("multi\nline"));
+        QCOMPARE(parsed.rows[2][0], QStringLiteral("a\"b"));
+        auto limited = readTable(path, QLatin1Char(','), {}, 1024, 2, 1, 100);
+        QCOMPARE(limited.rows.size(), 2);
+        QCOMPARE(limited.columns, 1);
+        QVERIFY(!limited.notice.isEmpty());
+        auto byteLimited = readTable(path, QLatin1Char(','), {}, 12);
+        QVERIFY(!byteLimited.notice.isEmpty());
+        QCOMPARE(byteLimited.rows.size(), 1);
+        std::stop_source cancelled;
+        cancelled.request_stop();
+        QVERIFY(!readTable(path, QLatin1Char(','), cancelled.get_token()).error.isEmpty());
+        QVERIFY(replacePreviewFile(path, "\"unclosed"));
+        QVERIFY(!readTable(path, QLatin1Char(',')).error.isEmpty());
+        QVERIFY(replacePreviewFile(path, "a\t2\n\"b\tc\"\t10\n"));
+        QCOMPARE(readTable(path, QLatin1Char('\t')).rows[1][0], QStringLiteral("b\tc"));
+        QVERIFY(replacePreviewFile(path, "name,value\nalpha,10\nbeta,2\n,empty first cell\n"));
+        PreviewWindow window(false);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<QTableView *>(QStringLiteral("tableCells")));
+        auto *view = window.findChild<QTableView *>(QStringLiteral("tableCells"));
+        QTRY_VERIFY(view->model());
+        QCOMPARE(view->model()->rowCount(), 4);
+        view->sortByColumn(1, Qt::AscendingOrder);
+        QCOMPARE(view->model()->index(0, 1).data().toString(), QStringLiteral("2"));
+        auto *search = window.findChild<QLineEdit *>(QStringLiteral("tableSearch"));
+        search->setText(QStringLiteral("alpha"));
+        QTRY_COMPARE(view->model()->rowCount(), 1);
+        view->selectAll();
+        view->setFocus();
+        QTRY_VERIFY(view->hasFocus());
+        QTest::keyClick(view, Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("alpha\t10"));
+        search->setText(QStringLiteral("empty first cell"));
+        QTRY_COMPARE(view->model()->rowCount(), 1);
+        QTRY_COMPARE(view->model()->index(0, 1).data().toString(),
+                     QStringLiteral("empty first cell"));
+        view->selectAll();
+        view->setFocus();
+        QTRY_VERIFY(view->hasFocus());
+        QTest::keyClick(view, Qt::Key_C, Qt::ControlModifier);
+        QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("\tempty first cell"));
+        window.HidePreview();
+        TableView earlySearch(path, QLatin1Char(','));
+        earlySearch.findChild<QLineEdit *>(QStringLiteral("tableSearch"))
+            ->setText(QStringLiteral("beta"));
+        auto *earlyCells = earlySearch.findChild<QTableView *>(QStringLiteral("tableCells"));
+        QTRY_VERIFY(earlyCells->model());
+        QCOMPARE(earlyCells->model()->rowCount(), 1);
+        QCOMPARE(earlyCells->model()->index(0, 0).data().toString(), QStringLiteral("beta"));
+    }
+
+    void trashAdvancesAndUndoRestoresSelection()
+    {
+        QVERIFY(qEnvironmentVariable("XDG_DATA_HOME")
+                    .startsWith(QCoreApplication::applicationDirPath()));
+        QTemporaryDir directory(QCoreApplication::applicationDirPath() +
+                                QStringLiteral("/window-trash-XXXXXX"));
+        QVERIFY(directory.isValid());
+        const auto a = directory.filePath(QStringLiteral("a.txt")),
+                   b = directory.filePath(QStringLiteral("b.txt"));
+        QVERIFY(replacePreviewFile(a, "first"));
+        QVERIFY(replacePreviewFile(b, "second"));
+        PreviewWindow window(false);
+        window.ShowPreview({a, b, a}, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        auto *trash = window.findChild<QAction *>(QStringLiteral("trashCurrentFile"));
+        auto *undo = window.findChild<QAction *>(QStringLiteral("undoTrash"));
+        QVERIFY(trash->isEnabled());
+        trash->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(a), 10000);
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("b.txt")));
+        QTRY_VERIFY(undo->isEnabled());
+        undo->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(a), 10000);
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("a.txt")));
+        QTRY_VERIFY(trash->isEnabled());
+        trash->trigger();
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("b.txt")));
+        QTRY_VERIFY(trash->isEnabled());
+        trash->trigger();
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("Selection empty")));
+        QVERIFY(!trash->isEnabled());
+        QTRY_VERIFY(undo->isEnabled());
+        undo->trigger();
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("b.txt")));
+        QTRY_VERIFY(undo->isEnabled());
+        undo->trigger();
+        QTRY_VERIFY(window.windowTitle().startsWith(QStringLiteral("a.txt")));
+        QVERIFY(QFileInfo::exists(a));
+        QVERIFY(QFileInfo::exists(b));
+        // A completed operation from a previous session must not alter this selection.
+        QTRY_VERIFY(trash->isEnabled());
+        trash->trigger();
+        window.ShowPreview({b}, {});
+        QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(a), 10000);
+        QTRY_VERIFY(undo->isEnabled());
+        undo->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(a), 10000);
+        QVERIFY(window.windowTitle().startsWith(QStringLiteral("b.txt")));
+        window.HidePreview();
+    }
+
+    void explicitDolphinMetadataEditing()
+    {
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("metadata.txt"));
+        QVERIFY(replacePreviewFile(path, "metadata test"));
+        KFileMetaData::UserMetaData metadata(path);
+        if (!metadata.isSupported())
+            QSKIP("Fixture filesystem does not support user metadata");
+        PreviewWindow window(false);
+        QSettings().setValue(QStringLiteral("window/information"), true);
+        window.ShowPreview({path}, {});
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        auto *panel = window.findChild<InformationPanel *>();
+        QVERIFY(panel);
+        panel->show();
+        panel->setFile(QUrl::fromLocalFile(path));
+        auto *edit = panel->findChild<QPushButton *>(QStringLiteral("editUserMetadata"));
+        QVERIFY(edit);
+        edit->click();
+        QTRY_VERIFY(window.findChild<MetadataEditor *>());
+        auto *editor = window.findChild<MetadataEditor *>();
+        auto *tags = editor->findChild<QPlainTextEdit *>(QStringLiteral("metadataTags"));
+        auto *comment = editor->findChild<QPlainTextEdit *>(QStringLiteral("metadataComment"));
+        auto *rating = editor->findChild<KRatingWidget *>();
+        QTRY_VERIFY(tags->isEnabled());
+        tags->setPlainText(QStringLiteral("preview\ntag, with comma"));
+        comment->setPlainText(QStringLiteral("Shared with Dolphin"));
+        rating->setRating(7);
+        auto *buttons = editor->findChild<QDialogButtonBox *>();
+        QSignalSpy saved(editor, &MetadataEditor::saved);
+        buttons->button(QDialogButtonBox::Apply)->click();
+        QCOMPARE(saved.count(), 0);
+        QVERIFY(buttons->button(QDialogButtonBox::Apply)->isEnabled());
+        tags->setPlainText(QStringLiteral("preview\nsecond tag"));
+        buttons->button(QDialogButtonBox::Apply)->click();
+        QTRY_COMPARE(saved.count(), 1);
+        QCOMPARE(metadata.rating(), 7);
+        QCOMPARE(metadata.tags(),
+                 QStringList({QStringLiteral("preview"), QStringLiteral("second tag")}));
+        QCOMPARE(metadata.userComment(), QStringLiteral("Shared with Dolphin"));
+        // Refreshing the sidebar must not destroy an in-progress form.
+        panel->setFile(QUrl::fromLocalFile(path));
+        QCOMPARE(window.findChild<MetadataEditor *>(), editor);
+        QVERIFY(replacePreviewFile(path, "replacement file"));
+        comment->setPlainText(QStringLiteral("Must not reach replacement"));
+        buttons->button(QDialogButtonBox::Apply)->click();
+        auto *status = editor->findChild<QLabel *>(QStringLiteral("metadataStatus"));
+        QTRY_VERIFY(status->text().contains(QStringLiteral("replaced")));
+        QCOMPARE(saved.count(), 1);
+        QCOMPARE(KFileMetaData::UserMetaData(path).userComment(), QString{});
+        window.HidePreview();
+        QTRY_VERIFY(!window.findChild<MetadataEditor *>());
+    }
+
+    void boundedRemoteTransfersAndCleanup()
+    {
+        QTemporaryDir directory;
+        const auto path = directory.filePath(QStringLiteral("source.txt"));
+        QVERIFY(replacePreviewFile(path, "temporary content"));
+        QString cached;
+        {
+            RemotePreview transfer(nullptr, 1024);
+            QSignalSpy ready(&transfer, &RemotePreview::ready);
+            QSignalSpy errors(&transfer, &RemotePreview::failed);
+            transfer.start(QUrl::fromLocalFile(path));
+            QTRY_COMPARE_WITH_TIMEOUT(ready.count(), 1, 10000);
+            QVERIFY(errors.isEmpty());
+            cached = ready.first().first().toUrl().toLocalFile();
+            QVERIFY(QFileInfo::exists(cached));
+            QFile file(cached);
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QCOMPARE(file.readAll(), QByteArray("temporary content"));
+        }
+        QVERIFY(!QFileInfo::exists(cached));
+        RemotePreview tooLarge(nullptr, 4);
+        QSignalSpy rejected(&tooLarge, &RemotePreview::failed);
+        QSignalSpy accepted(&tooLarge, &RemotePreview::ready);
+        tooLarge.start(QUrl::fromLocalFile(path));
+        QTRY_COMPARE_WITH_TIMEOUT(rejected.count(), 1, 10000);
+        QCOMPARE(accepted.count(), 0);
+        RemotePreview cancelled;
+        QSignalSpy stopped(&cancelled, &RemotePreview::failed);
+        cancelled.start(QUrl::fromLocalFile(path));
+        cancelled.cancel();
+        QCOMPARE(stopped.count(), 1);
+    }
+
+    void remoteHttpPreviewAndNavigation()
+    {
+        if (!KProtocolInfo::isKnownProtocol(QStringLiteral("http")))
+            QSKIP("HTTP KIO worker unavailable");
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        QList<QPointer<QTcpSocket>> sockets;
+        connect(
+            &server, &QTcpServer::newConnection, this,
+            [&]
+            {
+                while (server.hasPendingConnections())
+                {
+                    auto *socket = server.nextPendingConnection();
+                    sockets.append(socket);
+                    connect(
+                        socket, &QTcpSocket::readyRead, socket,
+                        [socket]
+                        {
+                            const auto request = socket->readAll();
+                            if (request.contains("/stall"))
+                                return;
+                            if (request.contains("/unknown"))
+                            {
+                                socket->write(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: "
+                                    "close\r\n\r\nbody exceeding limit");
+                                socket->disconnectFromHost();
+                                return;
+                            }
+                            socket->write(
+                                "HTTP/1.1 200 OK\r\nContent-Length: 16\r\nContent-Type: "
+                                "text/plain\r\nConnection: close\r\n\r\nremote test body");
+                            socket->disconnectFromHost();
+                        });
+                }
+            });
+        const QString root = QStringLiteral("http://127.0.0.1:%1/").arg(server.serverPort());
+        RemotePreview unknownLength(nullptr, 4);
+        QSignalSpy overLimit(&unknownLength, &RemotePreview::failed);
+        QSignalSpy unexpected(&unknownLength, &RemotePreview::ready);
+        unknownLength.start(QUrl(root + QStringLiteral("unknown.txt")));
+        QTRY_COMPARE_WITH_TIMEOUT(overLimit.count(), 1, 10000);
+        QCOMPARE(unexpected.count(), 0);
+        QVERIFY(overLimit.first().first().toString().contains(QStringLiteral("transfer exceeded")));
+        RemotePreview deadline(nullptr, 1024, 150);
+        QSignalSpy timedOut(&deadline, &RemotePreview::failed);
+        deadline.start(QUrl(root + QStringLiteral("stall.txt")));
+        QTRY_COMPARE_WITH_TIMEOUT(timedOut.count(), 1, 10000);
+        QVERIFY(timedOut.first().first().toString().contains(QStringLiteral("timed out")));
+
+        PreviewWindow window(false);
+        window.ShowPreview({root + QStringLiteral("remote.txt")}, {});
+        QTRY_VERIFY_WITH_TIMEOUT(window.findChild<KTextEditor::View *>(), 10000);
+        auto *text = window.findChild<KTextEditor::View *>();
+        QCOMPARE(text->document()->text(), QStringLiteral("remote test body"));
+        const auto cached = text->document()->url().toLocalFile();
+        QVERIFY(QFileInfo::exists(cached));
+        auto *copy = window.findChild<QAction *>(QStringLiteral("copyLocation"));
+        copy->trigger();
+        QCOMPARE(QApplication::clipboard()->text(), root + QStringLiteral("remote.txt"));
+        QVERIFY(!window.findChild<QAction *>(QStringLiteral("trashCurrentFile"))->isEnabled());
+        window.HidePreview();
+        QVERIFY(!QFileInfo::exists(cached));
+        QTemporaryDir directory;
+        const auto local = directory.filePath(QStringLiteral("local.txt"));
+        QVERIFY(replacePreviewFile(local, "local data"));
+        window.ShowPreview({root + QStringLiteral("stall.txt"), local}, {});
+        QTRY_VERIFY(window.findChild<QPushButton *>(QStringLiteral("cancelRemoteTransfer")));
+        QTest::keyClick(&window, Qt::Key_Right);
+        QTRY_VERIFY(window.findChild<KTextEditor::View *>());
+        QCOMPARE(window.findChild<KTextEditor::View *>()->document()->text(),
+                 QStringLiteral("local data"));
+        window.HidePreview();
+        window.ShowPreview({root + QStringLiteral("stall.txt")}, {});
+        QTRY_VERIFY(window.findChild<QPushButton *>(QStringLiteral("cancelRemoteTransfer")));
+        window.findChild<QPushButton *>(QStringLiteral("cancelRemoteTransfer"))->click();
+        QVERIFY(!window.findChild<QPushButton *>(QStringLiteral("cancelRemoteTransfer")));
+        bool cancelled = false;
+        for (auto *label : window.findChildren<QLabel *>())
+            cancelled |= label->text().contains(QStringLiteral("cancelled"));
+        QVERIFY(cancelled);
+        window.HidePreview();
+        window.ShowPreview({root + QStringLiteral("stall.txt")}, {});
+        QTRY_VERIFY(window.findChild<QPushButton *>(QStringLiteral("cancelRemoteTransfer")));
+        window.HidePreview();
+        QVERIFY(!window.IsVisible());
+        QVERIFY(!window.findChild<RemotePreview *>());
+    }
+
+    void imageComparisonMetadataAndLinkedViews()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const auto first = directory.filePath(QStringLiteral("left.png"));
+        const auto second = directory.filePath(QStringLiteral("right.png"));
+        QImage left(1600, 1000, QImage::Format_RGB32);
+        left.fill(Qt::red);
+        left.setText(QStringLiteral("Author"), QStringLiteral("First author"));
+        QVERIFY(left.save(first));
+        QImage right(1200, 800, QImage::Format_RGB32);
+        right.fill(Qt::blue);
+        right.setText(QStringLiteral("Author"), QStringLiteral("Second author"));
+        QVERIFY(right.save(second));
+        PreviewWindow window(false);
+        window.ShowPreview({first, second}, {});
+        QTRY_VERIFY(window.findChild<ImageView *>());
+        auto *action = window.findChild<QAction *>(QStringLiteral("compareImages"));
+        QVERIFY(action);
+        QVERIFY(action->isEnabled());
+        action->trigger();
+        QPointer<ImageComparison> comparison = window.findChild<ImageComparison *>();
+        QVERIFY(comparison);
+        QTRY_VERIFY(comparison->findChild<ImageView *>(QStringLiteral("comparisonImage0")));
+        QTRY_VERIFY(comparison->findChild<ImageView *>(QStringLiteral("comparisonImage1")));
+        auto *a = comparison->findChild<ImageView *>(QStringLiteral("comparisonImage0"));
+        auto *b = comparison->findChild<ImageView *>(QStringLiteral("comparisonImage1"));
+        auto *metadata =
+            comparison->findChild<QTableWidget *>(QStringLiteral("comparisonMetadata"));
+        QVERIFY(metadata);
+        const auto dimensions = metadata->findItems(QStringLiteral("Dimensions"), Qt::MatchExactly);
+        QCOMPARE(dimensions.size(), 1);
+        QCOMPARE(metadata->item(dimensions.first()->row(), 1)->text(),
+                 QStringLiteral("1600 × 1000"));
+        QCOMPARE(metadata->item(dimensions.first()->row(), 2)->text(),
+                 QStringLiteral("1200 × 800"));
+        QVERIFY(metadata->item(dimensions.first()->row(), 1)->font().bold());
+        const auto authors =
+            metadata->findItems(QStringLiteral("Embedded: Author"), Qt::MatchExactly);
+        QCOMPARE(authors.size(), 1);
+        QCOMPARE(metadata->item(authors.first()->row(), 1)->text(), QStringLiteral("First author"));
+        QCOMPARE(metadata->item(authors.first()->row(), 2)->text(),
+                 QStringLiteral("Second author"));
+        auto *linked = comparison->findChild<QCheckBox *>(QStringLiteral("linkedImageViews"));
+        QVERIFY(linked);
+        QVERIFY(!linked->isChecked());
+        const auto independent = b->viewState();
+        ImageViewState zoom;
+        zoom.fitted = false;
+        zoom.transform.scale(1.5, 1.5);
+        zoom.center = QPointF(800, 500);
+        a->restoreViewState(zoom);
+        QCoreApplication::processEvents();
+        QCOMPARE(b->viewState().transform, independent.transform);
+        linked->setChecked(true);
+        QTRY_COMPARE(b->viewState().transform, a->viewState().transform);
+        QTRY_VERIFY(QLineF(b->viewState().center, QPointF(600, 400)).length() < 2);
+        zoom.center = QPointF(1000, 600);
+        a->restoreViewState(zoom);
+        QTRY_VERIFY(QLineF(b->viewState().center, QPointF(750, 480)).length() < 2);
+        auto *fit = comparison->findChild<QPushButton *>(QStringLiteral("fitComparedImages"));
+        fit->click();
+        QTRY_VERIFY(a->viewState().fitted && b->viewState().fitted);
+        // Changing one pane rapidly must not install the previous request's image.
+        auto *source = comparison->findChild<QComboBox *>(QStringLiteral("comparisonSource1"));
+        source->setCurrentIndex(0);
+        source->setCurrentIndex(1);
+        QTRY_VERIFY(comparison->findChild<ImageView *>(QStringLiteral("comparisonImage1")));
+        b = comparison->findChild<ImageView *>(QStringLiteral("comparisonImage1"));
+        auto *pixmap = qgraphicsitem_cast<QGraphicsPixmapItem *>(b->scene()->items().first());
+        QCOMPARE(pixmap->pixmap().toImage().pixelColor(0, 0), QColor(Qt::blue));
+        window.HidePreview();
+        QTRY_VERIFY(comparison.isNull());
     }
 
     void explicitRefreshPreservesPosition()

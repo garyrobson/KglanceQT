@@ -29,6 +29,7 @@ PreviewPreferences readPreferences()
     p.information = settings.value(QStringLiteral("window/information"), false).toBool();
     p.filmstrip = settings.value(QStringLiteral("window/filmstrip"), false).toBool();
     p.textMiB = qBound(1, settings.value(QStringLiteral("limits/textMiB"), 16).toInt(), 16);
+    p.remoteMiB = qBound(1, settings.value(QStringLiteral("limits/remoteMiB"), 128).toInt(), 128);
     p.imageMP = qBound(1, settings.value(QStringLiteral("limits/imageMP"), 64).toInt(), 64);
     p.animationFrames = qBound(
         1, settings.value(QStringLiteral("limits/animationFrames"), MaxAnimationFrames).toInt(),
@@ -51,6 +52,7 @@ bool savePreferences(const PreviewPreferences &p)
     settings.setValue(QStringLiteral("window/information"), p.information);
     settings.setValue(QStringLiteral("window/filmstrip"), p.filmstrip);
     settings.setValue(QStringLiteral("limits/textMiB"), qBound(1, p.textMiB, 16));
+    settings.setValue(QStringLiteral("limits/remoteMiB"), qBound(1, p.remoteMiB, 128));
     settings.setValue(QStringLiteral("limits/imageMP"), qBound(1, p.imageMP, 64));
     settings.setValue(QStringLiteral("limits/animationFrames"),
                       qBound(1, p.animationFrames, MaxAnimationFrames));
@@ -120,7 +122,9 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
         limitForm->addRow(label, control);
         return control;
     };
-    auto *text = spin(QStringLiteral("textLimit"), tr("Text and Markdown:"), 16, tr(" MiB"));
+    auto *text =
+        spin(QStringLiteral("textLimit"), tr("Text, Markdown and tables:"), 16, tr(" MiB"));
+    auto *remote = spin(QStringLiteral("remoteLimit"), tr("Remote downloads:"), 128, tr(" MiB"));
     auto *image = spin(QStringLiteral("imageLimit"), tr("Decoded images:"), 64, tr(" MP"));
     auto *animationFrames = spin(QStringLiteral("animationFrameLimit"), tr("Animation frames:"),
                                  MaxAnimationFrames, {});
@@ -196,6 +200,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
         information->setChecked(p.information);
         filmstrip->setChecked(p.filmstrip);
         text->setValue(p.textMiB);
+        remote->setValue(p.remoteMiB);
         image->setValue(p.imageMP);
         animationFrames->setValue(p.animationFrames);
         animationMemory->setValue(p.animationMiB);
@@ -213,6 +218,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : KPageDialog(parent)
         p.information = information->isChecked();
         p.filmstrip = filmstrip->isChecked();
         p.textMiB = text->value();
+        p.remoteMiB = remote->value();
         p.imageMP = image->value();
         p.animationFrames = animationFrames->value();
         p.animationMiB = animationMemory->value();
