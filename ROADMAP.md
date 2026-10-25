@@ -83,8 +83,12 @@ preview defaults, limits, and Dolphin shortcut configuration.
 - [x] Add SQLite enable/row limits and optional session position memory to preferences.
 - [x] Automate working-tree makepkg builds and configure scheduled Arch/CachyOS
   CI with SQLite enabled/disabled, retaining source archives and package recipes.
-- [ ] Run the expanded CI matrix on GitHub and publish authorized application
-  releases after the remaining hardware/accessibility checks.
+- [x] Run the expanded Arch/CachyOS × SQLite ON/OFF matrix on GitHub, including
+  unprivileged package builds and uploaded artifacts. Passed for `63788ca` in
+  [run 40134115688](https://github.com/garyrobson/KglanceQT/actions/runs/40134115688).
+- [ ] Complete the remaining human desktop/hardware/accessibility checks before
+  a stable release. RC1 is published for testing with these limits disclosed in
+  the [release notes](docs/RELEASE_CANDIDATE.md).
 
 ## Architecture constraints
 

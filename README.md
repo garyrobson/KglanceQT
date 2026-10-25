@@ -1,8 +1,8 @@
 # KGlanceQT
 
-Current prerelease: **0.3.0-alpha.1** (`qt-v0.3.0-alpha.1`). This native Qt/KDE
-alpha is intended for testing; remaining features and desktop validation are
-tracked in [ROADMAP.md](ROADMAP.md).
+Current prerelease: **0.3.0-rc.1** (`qt-v0.3.0-rc.1`). This native Qt/KDE
+release candidate is intended for testing; remaining features and desktop
+validation are tracked in [ROADMAP.md](ROADMAP.md).
 
 > **AI CODING DISCLAIMER:** Both the original Kglance (Oxiview) project and this
 > KGlanceQT rewrite were developed with AI coding assistance.

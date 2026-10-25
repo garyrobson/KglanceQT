@@ -1,6 +1,7 @@
 name: Native build and tests
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
   schedule:
@@ -39,7 +40,7 @@ jobs:
           chown -R builder:builder "$GITHUB_WORKSPACE"
           install -d -m 700 -o builder -g builder "$GITHUB_WORKSPACE/build/ci-runtime"
           runuser -u builder -- env XDG_RUNTIME_DIR="$GITHUB_WORKSPACE/build/ci-runtime" \
-            python packaging/arch/build-snapshot.py
+            python packaging/arch/build-snapshot.py --pkgrel 1
       - name: Retain package and source recipe
         if: matrix.sqlite == 'ON'
         uses: actions/upload-artifact@v4
